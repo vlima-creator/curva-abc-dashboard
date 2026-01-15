@@ -11,7 +11,6 @@ st.title("Dashboard Curva ABC e Movimento por Períodos")
 def load_data(file) -> pd.DataFrame:
     df = pd.read_excel(file, sheet_name="Export")
 
-    # padroniza tipos
     for col in ["Qntd 0-30","Qntd 31-60","Qntd 61-90","Qntd 91-120"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
@@ -21,7 +20,6 @@ def load_data(file) -> pd.DataFrame:
     for col in ["Curva 0-30","Curva 31-60","Curva 61-90","Curva 91-120"]:
         df[col] = df[col].fillna("-").astype(str).str.strip()
 
-    # garantias básicas
     for col in ["MLB", "Título"]:
         if col not in df.columns:
             df[col] = ""
@@ -35,7 +33,6 @@ def br_int(x: float) -> str:
     return f"{int(x):,}".replace(",", ".")
 
 def to_csv_bytes(dataframe: pd.DataFrame) -> bytes:
-    # CSV com separador ; (bom para Excel BR)
     csv = dataframe.to_csv(index=False, sep=";", encoding="utf-8-sig")
     return csv.encode("utf-8-sig")
 
@@ -59,7 +56,6 @@ df = load_data(uploaded)
 # Sidebar: filtros
 # =========================
 st.sidebar.header("Filtros")
-
 curva_filtro = st.sidebar.multiselect(
     "Curvas para incluir",
     options=["A","B","C","-"],
@@ -74,12 +70,21 @@ mask_any = (
 )
 df_f = df[mask_any].copy()
 
-# Métricas agregadas úteis
+# Métricas agregadas
 df_f["Qtd total"] = df_f[["Qntd 0-30","Qntd 31-60","Qntd 61-90","Qntd 91-120"]].sum(axis=1)
 df_f["Fat total"] = df_f[["Fat. 0-30","Fat. 31-60","Fat. 61-90","Fat. 91-120"]].sum(axis=1)
 df_f["TM total"] = np.where(df_f["Qtd total"] > 0, df_f["Fat total"] / df_f["Qtd total"], np.nan)
 
-total_ads = len(df_f)
+# Ranks por período
+df_f["rank_0_30"] = df_f["Curva 0-30"].map(rank).fillna(0).astype(int)
+df_f["rank_31_60"] = df_f["Curva 31-60"].map(rank).fillna(0).astype(int)
+df_f["rank_61_90"] = df_f["Curva 61-90"].map(rank).fillna(0).astype(int)
+df_f["rank_91_120"] = df_f["Curva 91-120"].map(rank).fillna(0).astype(int)
+
+# Movimento de curva
+df_f["delta_31_0"] = df_f["rank_0_30"] - df_f["rank_31_60"]
+df_f["delta_61_31"] = df_f["rank_31_60"] - df_f["rank_61_90"]
+df_f["delta_91_61"] = df_f["rank_61_90"] - df_f["rank_91_120"]
 
 # =========================
 # KPIs por período
@@ -92,8 +97,10 @@ for p, cc, qq, ff in periods:
     kpi_rows.append({"Período": p, "Qtd": qty, "Faturamento": fat, "Ticket médio": tm})
 kpi_df = pd.DataFrame(kpi_rows)
 
+total_ads = len(df_f)
+
 # =========================
-# Definições de listas: âncoras, inativar, revitalizar e outros grupos
+# Regras cirúrgicas: listas operacionais
 # =========================
 
 # Âncoras: A em todos os períodos
@@ -104,226 +111,215 @@ anchors = df_f[
     (df_f["Curva 91-120"]=="A")
 ].copy()
 
-# A no 0-30 que caiu no 61-90 (virou B/C/-)
+# C recorrente (3 ou 4 períodos em C)
+tmp = df_f.copy()
+tmp["c_count"] = (tmp[["Curva 0-30","Curva 31-60","Curva 61-90","Curva 91-120"]]=="C").sum(axis=1)
+c_rec = tmp[tmp["c_count"]>=3].copy()
+
+# Sem vendas (proxy por janelas)
+no_sales_90 = df_f[(df_f["Qntd 0-30"]==0) & (df_f["Qntd 31-60"]==0) & (df_f["Qntd 61-90"]==0)].copy()
+no_sales_60 = df_f[(df_f["Qntd 0-30"]==0) & (df_f["Qntd 31-60"]==0)].copy()
+
+# Queda de curva recente (31-60 -> 0-30) e queda forte
+df_f["queda_recente"] = df_f["rank_0_30"] < df_f["rank_31_60"]
+df_f["queda_forte"] = (df_f["rank_31_60"] - df_f["rank_0_30"]) >= 2  # caiu 2 níveis ou mais
+
+# Oportunidade: vendeu 50 a 60 unidades em algum período recente
+opp_50_60 = df_f[
+    ((df_f["Qntd 0-30"] >= 50) & (df_f["Qntd 0-30"] <= 60)) |
+    ((df_f["Qntd 31-60"] >= 50) & (df_f["Qntd 31-60"] <= 60))
+].copy()
+
+# Revitalizar cirúrgico:
+# Regra 1: caiu de curva recente e vendeu entre 30 e 40 no 0-30 (tem sinal de tração agora)
+# Regra 2: caiu de curva recente e tinha 30-40 no 31-60, mas 0-30 caiu para 0-10 (perdeu tração)
+# Regra 3: queda forte e ainda tem volume (1-25) para tentar recuperar rápido
+revitalize = df_f[
+    (
+        df_f["queda_recente"] &
+        (
+            ((df_f["Qntd 0-30"] >= 30) & (df_f["Qntd 0-30"] <= 40)) |
+            (((df_f["Qntd 31-60"] >= 30) & (df_f["Qntd 31-60"] <= 40)) & (df_f["Qntd 0-30"] <= 10)) |
+            (df_f["queda_forte"] & (df_f["Qntd 0-30"] >= 1) & (df_f["Qntd 0-30"] <= 25))
+        )
+    )
+].copy()
+
+# Inativar cirúrgico:
+# Regra A: sem vendas 90 (0-30,31-60,61-90 = 0) -> inativar
+# Regra B: proxy sem vendas 60 + curva atual fraca (C ou "-") + houve queda de curva -> inativar
+# Regra C: C recorrente + sem vendas recentes (0-30 e 31-60 = 0) -> inativar
+inactivate = df_f[
+    (df_f.index.isin(no_sales_90.index)) |
+    (
+        (df_f.index.isin(no_sales_60.index)) &
+        (df_f["Curva 0-30"].isin(["-","C"])) &
+        (df_f["queda_recente"])
+    ) |
+    (
+        (df_f.index.isin(c_rec.index)) &
+        (df_f["Qntd 0-30"]==0) &
+        (df_f["Qntd 31-60"]==0)
+    )
+].copy()
+
+# Itens que eram A e caíram no 61-90 (recuperação)
 a_drop_61_90 = df_f[(df_f["Curva 0-30"]=="A") & (df_f["Curva 61-90"]!="A")].copy()
 
-# Subiu para A depois
+# Itens que subiram para A depois
 rise_to_A = df_f[
     df_f["Curva 0-30"].isin(["B","C","-"]) &
     ((df_f["Curva 31-60"]=="A") | (df_f["Curva 61-90"]=="A") | (df_f["Curva 91-120"]=="A"))
 ].copy()
 
-# C recorrente: 3 ou 4 períodos em C
-tmp = df_f.copy()
-tmp["c_count"] = (tmp[["Curva 0-30","Curva 31-60","Curva 61-90","Curva 91-120"]]=="C").sum(axis=1)
-c_rec = tmp[tmp["c_count"]>=3].copy()
-
-# Sem vendas 90 dias (proxy): 0-30, 31-60, 61-90 = 0
-no_sales_90 = df_f[
-    (df_f["Qntd 0-30"]==0) &
-    (df_f["Qntd 31-60"]==0) &
-    (df_f["Qntd 61-90"]==0)
-].copy()
-
-# Sem vendas 60 dias (proxy): 0-30 e 31-60 = 0
-no_sales_60 = df_f[
-    (df_f["Qntd 0-30"]==0) &
-    (df_f["Qntd 31-60"]==0)
-].copy()
-
-# Queda de curva recente (mais forte antes, pior agora)
-df_f["rank_0_30"] = df_f["Curva 0-30"].map(rank).fillna(0).astype(int)
-df_f["rank_31_60"] = df_f["Curva 31-60"].map(rank).fillna(0).astype(int)
-df_f["rank_61_90"] = df_f["Curva 61-90"].map(rank).fillna(0).astype(int)
-df_f["rank_91_120"] = df_f["Curva 91-120"].map(rank).fillna(0).astype(int)
-
-df_f["queda_recente"] = df_f["rank_0_30"] < df_f["rank_31_60"]
-
-# Revitalizar (heurística prática):
-# - teve queda recente de curva e teve alguma tração no passado
-# - e está com volume baixo agora (entre 1 e 40) OU está zerado agora, mas tinha 30-40 no 31-60
-revitalize = df_f[
-    (
-        (df_f["queda_recente"]) &
-        (
-            ((df_f["Qntd 0-30"] >= 1) & (df_f["Qntd 0-30"] <= 40)) |
-            ((df_f["Qntd 0-30"] == 0) & (df_f["Qntd 31-60"] >= 30) & (df_f["Qntd 31-60"] <= 40))
-        )
-    )
-].copy()
-
-# Inativar (regras objetivas):
-# - sem vendas 90 dias, ou
-# - sem vendas 60 dias e curva 0-30 é "-" ou "C"
-inactivate = df_f[
-    (df_f.index.isin(no_sales_90.index)) |
-    ((df_f.index.isin(no_sales_60.index)) & (df_f["Curva 0-30"].isin(["-","C"])))
-].copy()
-
 # =========================
-# Regras de ação sugerida + plano tático 15 e 30 dias
+# Ação sugerida + plano tático 15 e 30 dias
 # =========================
 
 def action_bundle(row) -> tuple[str, str, str]:
-    """
-    Retorna:
-    - ação sugerida
-    - plano 15 dias
-    - plano 30 dias
-    """
-
+    idx = row.name
     curva0 = row["Curva 0-30"]
     q0 = row["Qntd 0-30"]
-    f0 = row["Fat. 0-30"]
-    queda = bool(row.get("queda_recente", False))
 
-    is_anchor = (
-        row["Curva 0-30"]=="A" and row["Curva 31-60"]=="A" and
-        row["Curva 61-90"]=="A" and row["Curva 91-120"]=="A"
-    )
-
-    # flags (usando índices calculados)
-    idx = row.name
+    is_anchor = idx in anchors.index
     is_inactivate = idx in inactivate.index
     is_revitalize = idx in revitalize.index
-    is_rise = idx in rise_to_A.index
+    is_opp = idx in opp_50_60.index
     is_a_drop = idx in a_drop_61_90.index
+    is_rise = idx in rise_to_A.index
     is_c_rec = idx in c_rec.index
 
     # 1) Inativar
     if is_inactivate:
         acao = "Inativar ou pausar"
         p15 = (
-            "Dia 1 a 3: checar se existe estoque e se o anúncio está ativo.\n"
-            "Dia 4 a 7: se for item estratégico, testar reposicionamento de preço e frete.\n"
-            "Dia 8 a 15: se continuar sem venda, pausar e concentrar energia nos itens com giro."
+            "Dia 1 a 3: confirmar estoque, anúncio ativo e preço.\n"
+            "Dia 4 a 7: se for item estratégico, fazer um último ajuste simples de página.\n"
+            "Dia 8 a 15: sem reação, pausar e tirar do foco de mídia."
         )
         p30 = (
-            "Semana 1: decisão final de manter no catálogo ou remover.\n"
-            "Semana 2: se mantiver, reformular página do anúncio e testar kit ou variação.\n"
-            "Semana 3 e 4: reativar só com meta de venda mínima, senão inativar definitivo."
+            "Semana 1: decidir manter no catálogo ou remover.\n"
+            "Semana 2: se mantiver, reposicionar com kit ou variação.\n"
+            "Semana 3 e 4: reativar só com meta mínima de venda, senão inativar definitivo."
         )
         return acao, p15, p30
 
-    # 2) Âncora
+    # 2) Âncoras
     if is_anchor:
         acao = "Escalar com controle e defender posição"
         p15 = (
-            "Dia 1 a 3: validar estoque, ruptura e prazo de envio.\n"
-            "Dia 4 a 7: revisar título, fotos e variações para aumentar conversão.\n"
+            "Dia 1 a 3: zerar risco de ruptura e prazo alto.\n"
+            "Dia 4 a 7: melhorar conversão do anúncio (título, fotos, variações).\n"
             "Dia 8 a 15: aumentar verba em passos pequenos e cortar termos ruins."
         )
         p30 = (
-            "Semana 1: teste de preço em faixa estreita e monitorar conversão.\n"
-            "Semana 2: segmentar campanhas por termos principais e termos long tail.\n"
-            "Semana 3 e 4: manter escala gradual, controlar custo por venda e evitar canibalização."
+            "Semana 1: teste de preço pequeno e acompanhamento de conversão.\n"
+            "Semana 2: separar campanhas por termos principais e termos long tail.\n"
+            "Semana 3 e 4: escalar mantendo controle de custo e evitando canibalização."
         )
         return acao, p15, p30
 
-    # 3) Subiu para A depois
-    if is_rise:
-        acao = "Acelerar crescimento e consolidar curva A"
+    # 3) Oportunidade 50 a 60
+    if is_opp:
+        acao = "Oportunidade 50 a 60, alavancar ou escoar"
         p15 = (
-            "Dia 1 a 5: identificar o que mudou (preço, estoque, frete, campanha) e replicar.\n"
-            "Dia 6 a 10: ampliar exposição em termos rentáveis, manter negativo do que não vende.\n"
-            "Dia 11 a 15: reforçar página do anúncio para segurar conversão com mais tráfego."
+            "Dia 1 a 3: validar margem e concorrência, não escalar no escuro.\n"
+            "Dia 4 a 10: impulsionar termos exatos e melhorar exposição em posicionamentos úteis.\n"
+            "Dia 11 a 15: se responder, aumentar lance só nos termos que vendem."
         )
         p30 = (
-            "Semana 1: estruturar campanha separando termos fortes e termos de descoberta.\n"
-            "Semana 2: otimizar para margem, evitar descontos que derrubam ticket.\n"
-            "Semana 3 e 4: escalar orçamento se curva A se mantiver e o giro não travar por estoque."
+            "Semana 1: reforçar página do anúncio para segurar conversão com mais tráfego.\n"
+            "Semana 2: testar kit ou variação para aumentar ticket.\n"
+            "Semana 3 e 4: consolidar como projeto de crescimento ou escoar estoque com meta clara."
         )
         return acao, p15, p30
 
-    # 4) A que caiu no 61-90
+    # 4) A caiu no 61-90
     if is_a_drop:
-        acao = "Plano de recuperação para voltar à A"
+        acao = "Recuperar, era A e perdeu tração"
         p15 = (
-            "Dia 1 a 3: checar ruptura e concorrência direta.\n"
-            "Dia 4 a 7: ajustar preço e frete para faixa competitiva.\n"
-            "Dia 8 a 15: reativar mídia com foco em termos exatos e revisar posicionamentos."
+            "Dia 1 a 3: checar ruptura e mudanças de preço/frete.\n"
+            "Dia 4 a 7: ajustar competitividade e revisar reputação e prazo.\n"
+            "Dia 8 a 15: reativar mídia com termos exatos, revisar desperdício."
         )
         p30 = (
-            "Semana 1: reescrever título e ajustar atributos para melhorar relevância.\n"
-            "Semana 2: testar criativo e variações, revisar perguntas e reputação.\n"
-            "Semana 3 e 4: estabilizar investimento, manter só termos que dão venda."
+            "Semana 1: ajustar título e atributos para relevância.\n"
+            "Semana 2: ajustar variações e qualidade do anúncio.\n"
+            "Semana 3 e 4: estabilizar investimento mantendo só o que dá venda."
         )
         return acao, p15, p30
 
-    # 5) Revitalizar por queda recente e volume baixo
-    if is_revitalize or queda:
-        acao = "Revitalizar e recuperar tração"
+    # 5) Subiu para A depois
+    if is_rise:
+        acao = "Crescimento, consolidar curva A"
         p15 = (
-            "Dia 1 a 4: auditoria rápida de anúncio (título, fotos, preço, frete, estoque).\n"
-            "Dia 5 a 10: ativar campanha leve com termos específicos e controlar desperdício.\n"
-            "Dia 11 a 15: se houver venda, aumentar lance apenas nos termos vencedores."
+            "Dia 1 a 5: entender o gatilho de crescimento e repetir em itens parecidos.\n"
+            "Dia 6 a 10: ampliar exposição em termos rentáveis, travar termos ruins.\n"
+            "Dia 11 a 15: melhorar página para aguentar escala sem cair conversão."
         )
         p30 = (
-            "Semana 1: reorganizar variações e destacar benefício principal.\n"
-            "Semana 2: testar kit, brinde ou condição comercial que não destrua margem.\n"
-            "Semana 3 e 4: se não reagir, reclassificar para cauda longa e reduzir prioridade."
+            "Semana 1: estruturar campanha por intenção de busca.\n"
+            "Semana 2: proteger ticket médio e margem.\n"
+            "Semana 3 e 4: escalar com limite de custo e sem travar estoque."
         )
         return acao, p15, p30
 
-    # 6) C recorrente
+    # 6) Revitalizar cirúrgico
+    if is_revitalize:
+        acao = "Revitalizar, queda de curva com faixa 30 a 40 ou queda forte"
+        p15 = (
+            "Dia 1 a 4: auditoria rápida do anúncio (preço, frete, estoque, título, fotos).\n"
+            "Dia 5 a 10: campanha leve com termos específicos e controle de desperdício.\n"
+            "Dia 11 a 15: ajustar lances só nos termos que geram venda."
+        )
+        p30 = (
+            "Semana 1: reorganizar variações e ajustar proposta do anúncio.\n"
+            "Semana 2: testar kit ou condição comercial que não destrua margem.\n"
+            "Semana 3 e 4: se não reagir, reclassificar como cauda longa e reduzir prioridade."
+        )
+        return acao, p15, p30
+
+    # 7) C recorrente (sem inativar automaticamente)
     if is_c_rec:
-        acao = "Cauda longa, manter com baixa prioridade"
+        acao = "C recorrente, manter como cauda longa"
         p15 = (
-            "Dia 1 a 7: manter anúncio correto e sem investir em mídia constante.\n"
-            "Dia 8 a 15: avaliar se cabe em kits e vendas cruzadas com produtos A/B."
+            "Dia 1 a 7: sem mídia constante, só manter anúncio correto.\n"
+            "Dia 8 a 15: encaixar em kits e vendas cruzadas com produtos A/B."
         )
         p30 = (
-            "Semana 1 e 2: se tiver estoque parado, criar ações para escoar com bundle.\n"
-            "Semana 3 e 4: revisar portfólio, decidir manter por mix ou descontinuar."
+            "Semana 1 e 2: se estoque parado, bundle para escoar.\n"
+            "Semana 3 e 4: decidir manter por mix ou descontinuar."
         )
         return acao, p15, p30
 
-    # 7) Padrão
+    # padrão por curva atual
     if curva0 == "A":
-        acao = "Manter e otimizar"
-        p15 = (
-            "Dia 1 a 7: reduzir desperdício na mídia e melhorar conversão.\n"
-            "Dia 8 a 15: ajustar lances e termos, manter consistência."
+        return (
+            "Manter e otimizar",
+            "Dia 1 a 7: cortar desperdício e melhorar conversão.\nDia 8 a 15: ajustar lances e termos.",
+            "Semana 1: melhorias na página.\nSemana 2 a 4: escalar apenas se mantiver ticket e giro."
         )
-        p30 = (
-            "Semana 1: testar pequenas melhorias na página.\n"
-            "Semana 2 a 4: escalar apenas se vender mais sem derrubar ticket."
-        )
-        return acao, p15, p30
 
     if curva0 in ["B", "C"]:
-        acao = "Otimizar e escolher foco"
-        p15 = (
-            "Dia 1 a 5: checar competitividade e termos que realmente vendem.\n"
-            "Dia 6 a 15: definir se vira projeto de crescimento ou só item de mix."
+        return (
+            "Otimizar e definir foco",
+            "Dia 1 a 5: checar termos e competitividade.\nDia 6 a 15: decidir se vira crescimento ou mix.",
+            "Semana 1: estratégia por margem e giro.\nSemana 2 a 4: executar e medir."
         )
-        p30 = (
-            "Semana 1: estratégia definida por margem e giro.\n"
-            "Semana 2 a 4: se for crescimento, aumentar exposição, se não, reduzir esforço."
-        )
-        return acao, p15, p30
 
-    # curva "-"
-    acao = "Sem venda recente, avaliar continuidade"
-    p15 = (
-        "Dia 1 a 7: confirmar anúncio ativo, estoque e preço.\n"
-        "Dia 8 a 15: se não houver sinal, pausar."
+    return (
+        "Sem venda recente, avaliar continuidade",
+        "Dia 1 a 7: confirmar anúncio ativo e estoque.\nDia 8 a 15: se não houver sinal, pausar.",
+        "Semana 1: testar ajustes mínimos.\nSemana 2 a 4: se não reagir, inativar."
     )
-    p30 = (
-        "Semana 1: testar ajustes mínimos.\n"
-        "Semana 2 a 4: se não reagir, inativar e realocar foco."
-    )
-    return acao, p15, p30
 
-
-# Gera tabela de plano tático por produto (para dashboard e export)
+# Tabela do plano
 plan = df_f.copy()
 acoes = plan.apply(action_bundle, axis=1, result_type="expand")
 plan["Ação sugerida"] = acoes[0]
 plan["Plano 15 dias"] = acoes[1]
 plan["Plano 30 dias"] = acoes[2]
 
-# Um resumo de status (ajuda na filtragem)
 def status_bucket(row):
     idx = row.name
     if idx in anchors.index:
@@ -332,6 +328,8 @@ def status_bucket(row):
         return "Inativar"
     if idx in revitalize.index:
         return "Revitalizar"
+    if idx in opp_50_60.index:
+        return "Oportunidade 50 a 60"
     if idx in a_drop_61_90.index:
         return "Recuperar (A caiu)"
     if idx in rise_to_A.index:
@@ -355,9 +353,6 @@ c4.metric("Ticket médio total", br_money(tt_fat / tt_qty if tt_qty > 0 else 0.0
 
 st.divider()
 
-# =========================
-# Abas principais
-# =========================
 tab1, tab2, tab3 = st.tabs(["Dashboard", "Listas e Exportação", "Plano tático por produto"])
 
 # =========================
@@ -402,37 +397,9 @@ with tab1:
     st.plotly_chart(fig3, use_container_width=True)
 
     st.divider()
-
-    st.subheader("Perda acumulada: itens que eram A e deixaram de ser A")
-    def cohort_loss(prev_curve_col, prev_fat_col, next_curve_col, next_fat_col, curve="A"):
-        cohort = df_f[df_f[prev_curve_col] == curve]
-        left = cohort[cohort[next_curve_col] != curve]
-        stayed = cohort[cohort[next_curve_col] == curve]
-        return {
-            "cohort_n": len(cohort),
-            "left_n": len(left),
-            "stayed_n": len(stayed),
-            "fat_drop_left": float((left[prev_fat_col] - left[next_fat_col]).sum()),
-        }
-
-    t1 = cohort_loss("Curva 0-30", "Fat. 0-30", "Curva 31-60", "Fat. 31-60")
-    t2 = cohort_loss("Curva 31-60", "Fat. 31-60", "Curva 61-90", "Fat. 61-90")
-    t3 = cohort_loss("Curva 61-90", "Fat. 61-90", "Curva 91-120", "Fat. 91-120")
-
-    loss_table = pd.DataFrame([
-        {"Transição": "0-30 -> 31-60", "A no período anterior": t1["cohort_n"], "Saiu de A": t1["left_n"], "Perda acumulada": t1["fat_drop_left"]},
-        {"Transição": "31-60 -> 61-90", "A no período anterior": t2["cohort_n"], "Saiu de A": t2["left_n"], "Perda acumulada": t2["fat_drop_left"]},
-        {"Transição": "61-90 -> 91-120", "A no período anterior": t3["cohort_n"], "Saiu de A": t3["left_n"], "Perda acumulada": t3["fat_drop_left"]},
-    ])
-    show_loss = loss_table.copy()
-    show_loss["Perda acumulada"] = show_loss["Perda acumulada"].map(br_money)
-    st.dataframe(show_loss, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    st.subheader("Amostra com ação sugerida")
+    st.subheader("Top 40 por faturamento com ação sugerida")
     sample_cols = ["MLB","Título","Curva 0-30","Qntd 0-30","Fat. 0-30","Status","Ação sugerida"]
-    sample = plan.sort_values("Fat total", ascending=False)[sample_cols].head(30).copy()
+    sample = plan.sort_values("Fat total", ascending=False)[sample_cols].head(40).copy()
     sample["Fat. 0-30"] = sample["Fat. 0-30"].map(br_money)
     st.dataframe(sample, use_container_width=True, hide_index=True)
 
@@ -440,9 +407,8 @@ with tab1:
 # TAB 2: Listas e Exportação
 # =========================
 with tab2:
-    st.subheader("Exportação rápida de listas em CSV")
+    st.subheader("Exportação rápida em CSV")
 
-    # prepara dataframes de export
     anchors_export = anchors.copy().sort_values("Fat total", ascending=False)
     anchors_export = anchors_export[["MLB","Título","Fat total","Qtd total","TM total","Curva 0-30","Curva 31-60","Curva 61-90","Curva 91-120"]].copy()
 
@@ -450,36 +416,32 @@ with tab2:
     inactivate_export = inactivate_export[["MLB","Título","Fat total","Qtd total","Curva 0-30","Qntd 0-30","Qntd 31-60","Qntd 61-90"]].copy()
 
     revitalize_export = revitalize.copy().sort_values("Fat total", ascending=False)
-    revitalize_export = revitalize_export[["MLB","Título","Fat total","Qtd total","Curva 0-30","Curva 31-60","Qntd 0-30","Qntd 31-60"]].copy()
+    revitalize_export = revitalize_export[["MLB","Título","Fat total","Qtd total","Curva 31-60","Curva 0-30","Qntd 31-60","Qntd 0-30"]].copy()
 
-    cA, cB, cC = st.columns(3)
+    opp_export = opp_50_60.copy().sort_values("Fat total", ascending=False)
+    opp_export = opp_export[["MLB","Título","Fat total","Curva 0-30","Qntd 0-30","Curva 31-60","Qntd 31-60"]].copy()
+
+    cA, cB, cC, cD = st.columns(4)
 
     with cA:
-        st.markdown(f"**Âncoras:** {len(anchors_export)} produtos")
-        st.download_button(
-            label="Baixar CSV Âncoras",
-            data=to_csv_bytes(anchors_export),
-            file_name="ancoras_curva_ABC.csv",
-            mime="text/csv"
-        )
+        st.markdown(f"**Âncoras:** {len(anchors_export)}")
+        st.download_button("Baixar CSV Âncoras", data=to_csv_bytes(anchors_export),
+                           file_name="ancoras_curva_ABC.csv", mime="text/csv")
 
     with cB:
-        st.markdown(f"**Inativar:** {len(inactivate_export)} produtos")
-        st.download_button(
-            label="Baixar CSV Inativar",
-            data=to_csv_bytes(inactivate_export),
-            file_name="inativar_curva_ABC.csv",
-            mime="text/csv"
-        )
+        st.markdown(f"**Inativar:** {len(inactivate_export)}")
+        st.download_button("Baixar CSV Inativar", data=to_csv_bytes(inactivate_export),
+                           file_name="inativar_curva_ABC.csv", mime="text/csv")
 
     with cC:
-        st.markdown(f"**Revitalizar:** {len(revitalize_export)} produtos")
-        st.download_button(
-            label="Baixar CSV Revitalizar",
-            data=to_csv_bytes(revitalize_export),
-            file_name="revitalizar_curva_ABC.csv",
-            mime="text/csv"
-        )
+        st.markdown(f"**Revitalizar:** {len(revitalize_export)}")
+        st.download_button("Baixar CSV Revitalizar", data=to_csv_bytes(revitalize_export),
+                           file_name="revitalizar_curva_ABC.csv", mime="text/csv")
+
+    with cD:
+        st.markdown(f"**Oportunidade 50 a 60:** {len(opp_export)}")
+        st.download_button("Baixar CSV Oportunidade 50 a 60", data=to_csv_bytes(opp_export),
+                           file_name="oportunidade_50_60.csv", mime="text/csv")
 
     st.divider()
 
@@ -503,6 +465,11 @@ with tab2:
         show["Qtd total"] = show["Qtd total"].map(br_int)
         st.dataframe(show, use_container_width=True, hide_index=True)
 
+    with st.expander("Ver Oportunidade 50 a 60"):
+        show = opp_export.copy()
+        show["Fat total"] = show["Fat total"].map(br_money)
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
 # =========================
 # TAB 3: Plano tático por produto
 # =========================
@@ -524,40 +491,37 @@ with tab3:
             view["Título"].astype(str).str.lower().str.contains(text_search)
         ].copy()
 
-    # colunas do plano
     plan_cols = [
         "MLB","Título","Status",
-        "Curva 0-30","Qntd 0-30","Fat. 0-30",
-        "Fat total","Qtd total","TM total",
+        "Curva 31-60","Curva 0-30",
+        "Qntd 31-60","Qntd 0-30",
+        "Fat. 0-30","Fat total","Qtd total","TM total",
         "Ação sugerida","Plano 15 dias","Plano 30 dias"
     ]
     view_show = view[plan_cols].sort_values("Fat total", ascending=False).copy()
 
-    # botão export do plano filtrado
     st.download_button(
-        label="Baixar CSV do plano filtrado",
+        "Baixar CSV do plano filtrado",
         data=to_csv_bytes(view_show),
         file_name="plano_tatico_por_produto.csv",
         mime="text/csv"
     )
 
-    # formatar para exibição
     show = view_show.copy()
     for col in ["Fat. 0-30","Fat total"]:
         show[col] = show[col].map(br_money)
     show["Qtd total"] = show["Qtd total"].map(br_int)
     show["Qntd 0-30"] = show["Qntd 0-30"].map(br_int)
+    show["Qntd 31-60"] = show["Qntd 31-60"].map(br_int)
     show["TM total"] = show["TM total"].apply(lambda x: br_money(x) if pd.notna(x) else "-")
 
     st.dataframe(show, use_container_width=True, hide_index=True)
 
     st.divider()
-
-    st.subheader("Guia rápido do que fazer primeiro")
+    st.subheader("Regras que estamos usando agora")
     st.markdown(
-        "- **Inativar:** cortar itens sem sinal de venda recente para liberar foco e caixa.\n"
-        "- **Revitalizar:** itens com queda recente e volume baixo, bons para ajustes e teste rápido.\n"
-        "- **Âncoras:** escalar com controle, sem estourar custo e sem ruptura.\n"
-        "- **Recuperar (A caiu):** atacar causa raiz, normalmente ruptura, concorrência, preço ou exposição.\n"
-        "- **Crescimento (virou A):** consolidar, separar campanhas e evitar derrubar ticket."
+        "- **Inativar:** sem vendas 90 dias, ou sem vendas recentes + curva fraca + queda de curva, ou C recorrente sem vendas recentes.\n"
+        "- **Revitalizar:** queda recente com faixa 30 a 40, ou tinha 30 a 40 e caiu para até 10, ou queda forte com volume 1 a 25.\n"
+        "- **Oportunidade 50 a 60:** vendeu 50 a 60 em 0-30 ou 31-60.\n"
+        "- **Âncoras:** A em todos os períodos."
     )
