@@ -2,17 +2,178 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import re
+import io
 
-st.set_page_config(page_title="Curva ABC, Dashboard e Relatório", layout="wide")
-st.title("Curva ABC de Vendas, Dashboard e Relatório Estratégico")
+# =========================
+# Helpers (definidos cedo para evitar NameError em reruns)
+# =========================
+
+def br_money(x) -> str:
+    """Formata valor em R$ de forma segura."""
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "-"
+        return f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "-"
+
+
+def bm(x) -> str:
+    """Wrapper simples e seguro para moeda."""
+    return br_money(x)
+
+
+def br_int(x) -> str:
+    try:
+        return f"{int(x):,}".replace(",", ".")
+    except Exception:
+        return "-"
+
+
+def pct(x, decimals=2):
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "-"
+        return f"{round(float(x) * 100, decimals)}%"
+    except Exception:
+        return "-"
+
+
+def safe_div(a, b):
+    try:
+        if b and b != 0:
+            return a / b
+    except Exception:
+        pass
+    return np.nan
+
+
+st.set_page_config(
+    page_title="Curva ABC, Diagnóstico e Ações",
+    layout="wide"
+)
+
+# =========================
+# Estilo premium (dark)
+# =========================
+st.markdown(
+    """
+<style>
+.block-container {padding-top: 1.35rem; padding-bottom: 2.5rem;}
+h1, h2, h3 {letter-spacing: -0.3px;}
+hr {opacity: 0.25;}
+
+.premium-card {
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  border-radius: 16px;
+  padding: 16px;
+  margin: 10px 0 14px 0;
+}
+
+.premium-title {
+  font-size: 0.92rem;
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+
+.premium-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.premium-sub {
+  opacity: 0.75;
+  font-size: 0.85rem;
+  margin-top: 6px;
+}
+
+div.stDownloadButton button,
+div.stButton button {
+  border-radius: 12px !important;
+  padding: 0.55rem 0.85rem !important;
+}
+
+div[data-testid="stDataFrame"] {
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+header[data-testid="stHeader"] {
+  background: rgba(0,0,0,0);
+}
+
+header[data-testid="stHeader"] * {
+  color: rgba(255,255,255,0.85);
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# =========================
+# Header + período do dashboard
+# =========================
+_period_options = ["0-30", "31-60", "61-90", "91-120"]
+if "period_sel" not in st.session_state:
+    st.session_state["period_sel"] = "0-30"
+
+# Selectbox do período no topo, com cara de badge
+col_h1, col_h2 = st.columns([3.2, 1.0])
+with col_h1:
+    st.markdown(
+        """
+<div style="padding:10px 4px 6px 4px;margin-bottom:2px;">
+  <div style="font-size:32px;font-weight:800;line-height:1.12;letter-spacing:-0.4px;">
+    Curva ABC, Diagnóstico e Ações
+  </div>
+  <div style="opacity:0.75;margin-top:4px;font-size:14px;line-height:1.25;">
+    Decisão rápida por frente e prioridade.
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with col_h2:
+    # o widget é o "badge clicável"
+    st.selectbox(
+        "Período do dashboard",
+        options=_period_options,
+        key="period_sel",
+        label_visibility="collapsed",
+    )
+    st.markdown(
+        f"""
+<div style="margin-top:6px;display:flex;justify-content:flex-end;">
+  <div style="padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);font-size:12px;opacity:0.9;white-space:nowrap;">
+    Período: {st.session_state['period_sel']}
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+st.markdown("<hr style='margin:10px 0 14px 0;opacity:0.15;'>", unsafe_allow_html=True)
 
 # =========================
 # Helpers
 # =========================
-def br_money(x: float) -> str:
-    if x is None or (isinstance(x, float) and np.isnan(x)):
+def br_money(x) -> str:
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "-"
+        return f"R$ {float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
         return "-"
-    return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def bm(x) -> str:
+    """Wrapper simples e seguro para moeda."""
+    return br_money(x)
+
 
 def br_int(x) -> str:
     try:
@@ -28,21 +189,39 @@ def safe_div(a, b):
         pass
     return np.nan
 
-def to_csv_bytes(dataframe: pd.DataFrame) -> bytes:
-    csv = dataframe.to_csv(index=False, sep=";", encoding="utf-8-sig")
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    csv = df.to_csv(index=False, sep=";", encoding="utf-8-sig")
     return csv.encode("utf-8-sig")
 
+
+def to_excel_bytes(sheets: dict, filename_hint: str = "relatorio") -> bytes:
+    """Gera um XLSX em memória com múltiplas abas."""
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        for name, sdf in sheets.items():
+            safe_name = str(name)[:31] if name else "Sheet1"
+            sdf.to_excel(writer, index=False, sheet_name=safe_name)
+    bio.seek(0)
+    return bio.getvalue()
+
 def ensure_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
-    """Garante que todas as colunas existam antes do recorte (evita KeyError)."""
     out = df.copy()
     for c in cols:
         if c not in out.columns:
             out[c] = np.nan
     return out[cols].copy()
 
+def pct(x, decimals=2):
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "-"
+        return f"{round(float(x) * 100, decimals)}%"
+    except Exception:
+        return "-"
+
 rank = {"-": 0, "C": 1, "B": 2, "A": 3}
 
-periods = [
+PERIODS = [
     ("0-30", "Curva 0-30", "Qntd 0-30", "Fat. 0-30"),
     ("31-60", "Curva 31-60", "Qntd 31-60", "Fat. 31-60"),
     ("61-90", "Curva 61-90", "Qntd 61-90", "Fat. 61-90"),
@@ -60,7 +239,6 @@ CURVE_COLS = ["Curva 0-30", "Curva 31-60", "Curva 61-90", "Curva 91-120"]
 def load_main(file) -> pd.DataFrame:
     df = pd.read_excel(file, sheet_name="Export")
 
-    # garante colunas
     for col in QTY_COLS:
         if col not in df.columns:
             df[col] = 0
@@ -79,7 +257,6 @@ def load_main(file) -> pd.DataFrame:
     if "MLB" not in df.columns:
         df["MLB"] = ""
     if "Título" not in df.columns:
-        # se vier como "Titulo", reaproveita
         if "Titulo" in df.columns:
             df["Título"] = df["Titulo"]
         else:
@@ -127,33 +304,82 @@ def load_enrich(file) -> pd.DataFrame:
 
     return edf
 
+
+# =========================
+# Status (ação em andamento)
+# Persistência: enquanto o app estiver rodando.
+# =========================
+if "mlb_status" not in st.session_state:
+    st.session_state["mlb_status"] = {}  # {mlb: status}
+
+STATUS_OPTIONS = ["Novo", "Em andamento", "Concluído", "Pausado"]
+
+def get_status(mlb: str) -> str:
+    mlb = str(mlb).strip()
+    return st.session_state["mlb_status"].get(mlb, "Novo")
+
+def set_status(mlb: str, status: str):
+    mlb = str(mlb).strip()
+    if status not in STATUS_OPTIONS:
+        status = "Novo"
+    st.session_state["mlb_status"][mlb] = status
 # =========================
 # Uploads
 # =========================
-uploaded = st.file_uploader("Envie o arquivo Excel da Curva ABC", type=["xlsx"])
-if not uploaded:
-    st.info("Envie o arquivo para carregar o dashboard e o relatório.")
+with st.container(border=True):
+    st.subheader("Arquivos")
+    col_u1, col_u2 = st.columns([1.2, 1.0])
+    with col_u1:
+        main_file = st.file_uploader("Arquivo Curva ABC (Excel)", type=["xlsx"])
+        st.session_state["_main_file"] = main_file
+    with col_u2:
+        enrich_file = st.file_uploader(
+            "Opcional: arquivo com custo, margem e investimento em ads por MLB",
+            type=["xlsx", "csv"],
+            key="enrich",
+        )
+
+if not main_file:
+    st.info("Envie o arquivo da Curva ABC para carregar o dashboard.")
     st.stop()
 
-enrich_upload = st.file_uploader(
-    "Opcional: envie um arquivo Excel/CSV com custo/margem e investimento em ads por MLB (jeito 1)",
-    type=["xlsx", "csv"],
-    key="enrich",
+df = load_main(main_file)
+edf = load_enrich(enrich_file)
+
+# =========================
+# Sidebar, painel de comando
+# =========================
+st.sidebar.header("Painel de comando")
+
+page = st.sidebar.radio(
+    "Navegação",
+    options=["Visão geral", "Diagnóstico e riscos", "Plano tático e exportação"],
+    index=0,
 )
 
-df = load_main(uploaded)
-edf = load_enrich(enrich_upload)
-
-# =========================
-# Sidebar filters
-# =========================
-st.sidebar.header("Filtros")
+st.sidebar.subheader("Filtros")
 curva_filtro = st.sidebar.multiselect(
     "Curvas para incluir",
     options=["A", "B", "C", "-"],
     default=["A", "B", "C", "-"]
 )
 
+st.sidebar.subheader("Parâmetros estratégicos")
+tacos_limite = st.sidebar.number_input("TACOS máximo aceitável", min_value=0.0, max_value=1.0, value=0.15, step=0.01)
+margem_pos_ads_min = st.sidebar.number_input("Margem pós ads mínima", min_value=-1.0, max_value=1.0, value=0.08, step=0.01)
+ticket_min_escala = st.sidebar.number_input("Ticket mínimo para escalar", min_value=0.0, value=50.0, step=5.0)
+modo_conservador = st.sidebar.checkbox("Modo conservador", value=False)
+
+if modo_conservador:
+    tacos_limite = min(tacos_limite, 0.12)
+    margem_pos_ads_min = max(margem_pos_ads_min, 0.10)
+
+st.sidebar.subheader("Busca")
+search_text = st.sidebar.text_input("Buscar por MLB ou Título", value="").strip().lower()
+
+# =========================
+# Base dataframe + merge opcional
+# =========================
 mask_any = (
     df["Curva 0-30"].isin(curva_filtro) |
     df["Curva 31-60"].isin(curva_filtro) |
@@ -162,14 +388,17 @@ mask_any = (
 )
 df_f = df[mask_any].copy()
 
-# =========================
-# Merge opcional
-# =========================
 if not edf.empty:
     df_f = df_f.merge(edf, on="MLB", how="left")
 
+if search_text:
+    df_f = df_f[
+        df_f["MLB"].astype(str).str.lower().str.contains(search_text) |
+        df_f["Título"].astype(str).str.lower().str.contains(search_text)
+    ].copy()
+
 # =========================
-# Base metrics
+# Métricas base
 # =========================
 df_f["Qtd total"] = df_f[QTY_COLS].sum(axis=1)
 df_f["Fat total"] = df_f[FAT_COLS].sum(axis=1)
@@ -181,9 +410,9 @@ for p in ["0-30", "31-60", "61-90", "91-120"]:
 df_f["queda_recente"] = df_f["rank_0-30"] < df_f["rank_31-60"]
 df_f["queda_forte"] = (df_f["rank_31-60"] - df_f["rank_0-30"]) >= 2
 
-# KPIs por período
+# KPIs por período (ponderados)
 kpi_rows = []
-for p, cc, qq, ff in periods:
+for p, cc, qq, ff in PERIODS:
     qty = int(df_f[qq].sum())
     fat = float(df_f[ff].sum())
     tm = safe_div(fat, qty)
@@ -191,7 +420,7 @@ for p, cc, qq, ff in periods:
 kpi_df = pd.DataFrame(kpi_rows)
 
 # =========================
-# Métricas avançadas (enriquecimento opcional)
+# Métricas financeiras (opcionais)
 # =========================
 df_f["preco_medio_0_30"] = np.where(df_f["Qntd 0-30"] > 0, df_f["Fat. 0-30"] / df_f["Qntd 0-30"], np.nan)
 
@@ -226,10 +455,10 @@ def classifica_risco(row):
     if pd.notna(row.get("lucro_pos_ads_0_30")) and row["lucro_pos_ads_0_30"] < 0:
         return "Risco alto, prejuízo"
 
-    if pd.notna(row.get("tacos_0_30")) and row["tacos_0_30"] > 0.20:
+    if pd.notna(row.get("tacos_0_30")) and row["tacos_0_30"] > tacos_limite:
         return "Risco médio, tacos alto"
 
-    if pd.notna(row.get("margem_pos_ads_%_0_30")) and row["margem_pos_ads_%_0_30"] >= 0.10:
+    if pd.notna(row.get("margem_pos_ads_%_0_30")) and row["margem_pos_ads_%_0_30"] >= margem_pos_ads_min:
         return "Oportunidade, margem boa"
 
     return "Ok, monitorar"
@@ -237,7 +466,7 @@ def classifica_risco(row):
 df_f["risco_lucro"] = df_f.apply(classifica_risco, axis=1)
 
 # =========================
-# Segmentações
+# Segmentações atuais (regras mantidas)
 # =========================
 anchors = df_f[
     (df_f["Curva 0-30"] == "A") &
@@ -258,6 +487,8 @@ drop_alert["Fat anterior ref"] = np.where(
 )
 drop_alert["Perda estimada"] = (drop_alert["Fat anterior ref"] - drop_alert["Fat. 0-30"]).clip(lower=0.0)
 drop_alert = drop_alert.sort_values("Perda estimada", ascending=False)
+
+perda_total = float(drop_alert["Perda estimada"].fillna(0).sum())
 
 rise_to_A = df_f[
     (df_f["Curva 0-30"] == "A") &
@@ -311,19 +542,41 @@ opp_50_60 = df_f[
 ].copy()
 
 # =========================
-# Ação sugerida + plano
+# Ação curta + Plano 15 e 30
 # =========================
-def action_bundle(row):
-    idx = row.name
+def action_short(row, group_label: str) -> str:
+    curva0 = row.get("Curva 0-30", "-")
+    risk = row.get("risco_lucro", "Sem dados (opcional)")
+    tm = row.get("TM total", np.nan)
 
-    is_anchor = idx in anchors.index
-    is_inactivate = idx in inactivate.index
-    is_revitalize = idx in revitalize.index
-    is_opp = idx in opp_50_60.index
-    is_drop = idx in drop_alert.index
-    is_rise = idx in rise_to_A.index
-    is_combo = idx in dead_stock_combo.index
+    if group_label == "LIMPEZA, Parado":
+        if row.name in dead_stock_combo.index:
+            return "Combo ou liquidação"
+        return "Pausar e limpar catálogo"
 
+    if group_label == "CORREÇÃO, Fuga de receita":
+        return "Corrigir oferta e recuperar"
+
+    if group_label == "CORREÇÃO, Revitalizar":
+        return "Revitalizar com ajustes"
+
+    if group_label == "ATAQUE, Crescimento":
+        if pd.notna(tm) and float(tm) >= ticket_min_escala:
+            return "Escalar com controle"
+        return "Escalar com cautela"
+
+    if group_label == "DEFESA, Âncora":
+        if risk in ["Risco alto, prejuízo", "Risco médio, tacos alto"]:
+            return "Defender sem escalar"
+        return "Defender e escalar"
+
+    if curva0 == "A":
+        return "Otimizar e manter"
+    if curva0 in ["B", "C"]:
+        return "Otimizar e decidir foco"
+    return "Reavaliar continuidade"
+
+def action_bundle(row, group_label: str):
     risco = row.get("risco_lucro", "Sem dados (opcional)")
     tacos = row.get("tacos_0_30", np.nan)
     lucro_pos = row.get("lucro_pos_ads_0_30", np.nan)
@@ -332,92 +585,56 @@ def action_bundle(row):
     if risco != "Sem dados (opcional)":
         detalhe_risco = f" Risco: {risco}."
         if pd.notna(tacos):
-            detalhe_risco += f" TACOS 0-30: {round(float(tacos) * 100, 2)}%."
+            detalhe_risco += f" TACOS 0-30: {pct(tacos)}."
         if pd.notna(lucro_pos):
-            detalhe_risco += f" Lucro pós ads 0-30: {br_money(float(lucro_pos))}."
+            detalhe_risco += f" Lucro pós ads 0-30: {bm(lucro_pos)}."
 
-    if is_inactivate:
+    if group_label == "LIMPEZA, Parado":
+        if row.name in dead_stock_combo.index:
+            return (
+                f"Liquidação ou combos.{detalhe_risco}",
+                "Dia 1 a 5: montar combo com âncoras ou itens B. Objetivo é giro.\nDia 6 a 15: ajustar preço e oferta do anúncio.",
+                "Semana 1: criar kits e variações.\nSemana 2 a 4: manter o que girar. Se não girar, caminhar para inativação."
+            )
         return (
             f"Inativar ou pausar.{detalhe_risco}",
-            "Dia 1 a 3: confirmar anúncio ativo, estoque e preço. Se estiver tudo certo e não vende, pausar.\n"
-            "Dia 4 a 10: realocar foco para itens com giro.\n"
-            "Dia 11 a 15: manter pausado se não houver sinal.",
-            "Semana 1: decidir manter no catálogo ou retirar.\n"
-            "Semana 2: se mantiver, reativar com meta mínima e ajuste simples.\n"
-            "Semana 3 e 4: se não reagir, inativar definitivo."
+            "Dia 1 a 3: confirmar anúncio ativo, estoque e preço. Se estiver tudo certo e não vende, pausar.\nDia 4 a 15: realocar foco para itens com giro.",
+            "Semana 1: decidir manter no catálogo ou retirar.\nSemana 2 a 4: se não reagir, inativar definitivo."
         )
 
-    if is_combo:
-        return (
-            f"Liquidação ou combos.{detalhe_risco}",
-            "Dia 1 a 5: montar combo com âncoras ou itens B. Objetivo é giro.\n"
-            "Dia 6 a 15: ajustar preço e oferta do anúncio.",
-            "Semana 1: criar kits e variações.\n"
-            "Semana 2 a 4: se não girar, caminhar para inativação."
-        )
-
-    if is_drop:
+    if group_label == "CORREÇÃO, Fuga de receita":
         return (
             f"Correção imediata de fuga de receita.{detalhe_risco}",
-            "Dia 1 a 2: checar ruptura, prazo, reputação e concorrência.\n"
-            "Dia 3 a 7: ajustar preço e frete.\n"
-            "Dia 8 a 15: mídia leve com termos exatos e corte de desperdício.",
-            "Semana 1: ajustar título e atributos.\n"
-            "Semana 2: otimizar página para conversão.\n"
-            "Semana 3 e 4: manter só o que dá venda."
+            "Dia 1 a 2: checar ruptura, prazo, reputação e concorrência.\nDia 3 a 7: ajustar preço e frete.\nDia 8 a 15: mídia leve com termos exatos, cortar desperdício.",
+            "Semana 1: ajustar título e atributos.\nSemana 2: otimizar página para conversão.\nSemana 3 a 4: manter só o que dá venda."
         )
 
-    if is_anchor:
-        return (
-            f"Defesa e escala controlada.{detalhe_risco}",
-            "Dia 1 a 3: garantir estoque.\n"
-            "Dia 4 a 10: melhorar conversão.\n"
-            "Dia 11 a 15: aumentar orçamento em passos pequenos.",
-            "Semana 1: separar campanhas por intenção.\n"
-            "Semana 2: teste pequeno de preço.\n"
-            "Semana 3 e 4: escalar com controle de custo."
-        )
-
-    if is_rise or is_opp:
-        return (
-            f"Ataque para consolidar crescimento.{detalhe_risco}",
-            "Dia 1 a 5: identificar gatilho e replicar.\n"
-            "Dia 6 a 10: ampliar exposição em termos rentáveis.\n"
-            "Dia 11 a 15: reforçar página do anúncio.",
-            "Semana 1: campanhas separadas.\n"
-            "Semana 2: proteger ticket.\n"
-            "Semana 3 e 4: escalar sem travar estoque."
-        )
-
-    if is_revitalize:
+    if group_label == "CORREÇÃO, Revitalizar":
         return (
             f"Revitalizar com ajuste rápido.{detalhe_risco}",
-            "Dia 1 a 4: auditoria do anúncio, preço, frete, título, fotos e estoque.\n"
-            "Dia 5 a 10: campanha leve.\n"
-            "Dia 11 a 15: aumentar só onde tiver venda.",
-            "Semana 1: reorganizar variações.\n"
-            "Semana 2: testar kit.\n"
-            "Semana 3 e 4: se não reagir, reduzir prioridade."
+            "Dia 1 a 4: auditoria do anúncio, preço, frete, título, fotos e estoque.\nDia 5 a 10: campanha leve.\nDia 11 a 15: aumentar só onde tiver venda.",
+            "Semana 1: reorganizar variações.\nSemana 2: testar kit ou condição.\nSemana 3 a 4: se não reagir, reduzir prioridade."
         )
 
-    curva0 = row["Curva 0-30"]
-    if curva0 == "A":
-        return (f"Manter e otimizar.{detalhe_risco}",
-                "Dia 1 a 15: reduzir desperdício e melhorar conversão.",
-                "Semana 1 a 4: escalar só se manter ticket e margem.")
-    if curva0 in ["B", "C"]:
-        return (f"Otimizar e definir foco.{detalhe_risco}",
-                "Dia 1 a 15: checar competitividade e termos.",
-                "Semana 1 a 4: executar e medir.")
-    return (f"Sem venda recente, avaliar continuidade.{detalhe_risco}",
-            "Dia 1 a 15: confirmar anúncio ativo e estoque.",
-            "Semana 1 a 4: se não reagir, inativar.")
+    if group_label == "DEFESA, Âncora":
+        return (
+            f"Defesa e escala controlada.{detalhe_risco}",
+            "Dia 1 a 3: garantir estoque.\nDia 4 a 10: melhorar conversão.\nDia 11 a 15: aumentar orçamento em passos pequenos.",
+            "Semana 1: separar campanhas por intenção.\nSemana 2: teste pequeno de preço.\nSemana 3 a 4: escalar com controle de custo."
+        )
 
-plan = df_f.copy()
-actions = plan.apply(action_bundle, axis=1, result_type="expand")
-plan["Ação sugerida"] = actions[0]
-plan["Plano 15 dias"] = actions[1]
-plan["Plano 30 dias"] = actions[2]
+    if group_label == "ATAQUE, Crescimento":
+        return (
+            f"Ataque para consolidar crescimento.{detalhe_risco}",
+            "Dia 1 a 5: identificar gatilho e replicar.\nDia 6 a 10: ampliar exposição em termos rentáveis.\nDia 11 a 15: reforçar página do anúncio.",
+            "Semana 1: campanhas separadas.\nSemana 2: proteger ticket.\nSemana 3 a 4: escalar sem travar estoque."
+        )
+
+    return (
+        f"Otimizar e monitorar.{detalhe_risco}",
+        "Dia 1 a 15: melhorar conversão e cortar desperdício.",
+        "Semana 1 a 4: manter o que performa e ajustar o que cai."
+    )
 
 def frente_bucket(idx):
     if idx in anchors.index:
@@ -432,340 +649,529 @@ def frente_bucket(idx):
         return "LIMPEZA, Parado"
     return "Otimização"
 
+plan = df_f.copy()
 plan["Frente"] = [frente_bucket(i) for i in plan.index]
+plan["Ação curta"] = plan.apply(lambda r: action_short(r, r["Frente"]), axis=1)
+
+bundles = plan.apply(lambda r: action_bundle(r, r["Frente"]), axis=1, result_type="expand")
+plan["Ação sugerida"] = bundles[0]
+plan["Plano 15 dias"] = bundles[1]
+plan["Plano 30 dias"] = bundles[2]
 
 # =========================
-# Diagnóstico macro
+# Score de prioridade (ranking)
 # =========================
-dist_0_30 = df_f["Curva 0-30"].value_counts().reindex(["A", "B", "C", "-"]).fillna(0).astype(int)
-dist_0_30_df = pd.DataFrame({"Curva": dist_0_30.index, "Anúncios": dist_0_30.values})
+def normalize_series(s: pd.Series) -> pd.Series:
+    s2 = pd.to_numeric(s, errors="coerce")
+    if s2.notna().sum() == 0:
+        return pd.Series(np.zeros(len(s2)), index=s2.index)
+    mn = float(s2.min())
+    mx = float(s2.max())
+    if mx - mn == 0:
+        return pd.Series(np.zeros(len(s2)), index=s2.index)
+    return (s2 - mn) / (mx - mn)
 
-fat_0_30_total = float(df_f["Fat. 0-30"].sum())
-fat_0_30_A = float(df_f.loc[df_f["Curva 0-30"] == "A", "Fat. 0-30"].sum())
-conc_A_0_30 = safe_div(fat_0_30_A, fat_0_30_total)
+plan["impacto_queda"] = plan.get("Perda estimada", pd.Series(np.zeros(len(plan)), index=plan.index)).fillna(0.0)
+plan["impacto_fat0"] = plan["Fat. 0-30"].fillna(0.0)
+plan["impacto_lucro"] = plan.get("lucro_pos_ads_0_30", pd.Series(np.zeros(len(plan)), index=plan.index)).fillna(0.0)
 
-tm_0_30 = float(kpi_df.loc[kpi_df["Período"] == "0-30", "Ticket médio"].iloc[0])
-tm_31_60 = float(kpi_df.loc[kpi_df["Período"] == "31-60", "Ticket médio"].iloc[0])
-tm_61_90 = float(kpi_df.loc[kpi_df["Período"] == "61-90", "Ticket médio"].iloc[0])
+n_queda = normalize_series(plan["impacto_queda"])
+n_fat0 = normalize_series(plan["impacto_fat0"])
+n_lucro = normalize_series(plan["impacto_lucro"])
 
-def tm_direction(a, b, c):
-    if np.isnan(a) or np.isnan(b) or np.isnan(c):
-        return "Sem dados suficientes para leitura do ticket médio."
-    if a < b < c:
-        return "Ticket médio subindo. Ajuda margem, mas pode cair volume se preço esticar."
-    if a > b > c:
-        return "Ticket médio caindo. Pode ser mix mais barato ou promoções, e pressiona margem."
-    if b < a and c > b:
-        return "Ticket caiu e depois recuperou. Pode ter sido promo e retorno do mix."
-    if b > a and c < b:
-        return "Ticket subiu e depois caiu. Pode ser ruptura de itens caros ou mudança de mix."
-    return "Ticket oscilando. Vale cruzar com mix e concorrência."
+score = (0.40 * n_queda) + (0.30 * n_lucro) + (0.20 * n_fat0)
 
-tm_reading = tm_direction(tm_0_30, tm_31_60, tm_61_90)
+bonus = np.zeros(len(plan))
+bonus += np.where(plan["Frente"] == "CORREÇÃO, Fuga de receita", 0.20, 0.0)
+bonus += np.where(plan["Frente"] == "ATAQUE, Crescimento", 0.10, 0.0)
+bonus += np.where(plan["Frente"] == "DEFESA, Âncora", 0.05, 0.0)
+bonus -= np.where(plan["Frente"] == "LIMPEZA, Parado", 0.05, 0.0)
+
+bonus += np.where(plan["risco_lucro"] == "Oportunidade, margem boa", 0.10, 0.0)
+bonus -= np.where(plan["risco_lucro"] == "Risco alto, prejuízo", 0.20, 0.0)
+
+plan["Score prioridade"] = (score + bonus).clip(lower=0.0)
+
+def prioridade_label(x):
+    try:
+        if x >= 0.75:
+            return "P1, agora"
+        if x >= 0.50:
+            return "P2, esta semana"
+        if x >= 0.30:
+            return "P3, este mês"
+        return "P4, monitorar"
+    except Exception:
+        return "P4, monitorar"
+
+plan["Prioridade"] = plan["Score prioridade"].apply(prioridade_label)
 
 # =========================
-# KPIs topo
+# Cards executivos topo (período selecionado)
 # =========================
+period_sel = st.session_state.get("period_sel", "0-30")
+curve_col_sel = f"Curva {period_sel}"
+qty_col_sel = f"Qntd {period_sel}"
+fat_col_sel = f"Fat. {period_sel}"
+
+# defensivo, se alguma coluna não existir
+for _c in [curve_col_sel, qty_col_sel, fat_col_sel]:
+    if _c not in df_f.columns:
+        # cai para 0-30 como fallback
+        period_sel = "0-30"
+        curve_col_sel = "Curva 0-30"
+        qty_col_sel = "Qntd 0-30"
+        fat_col_sel = "Fat. 0-30"
+        break
+
 total_ads = len(df_f)
-tt_fat = float(df_f[FAT_COLS].sum().sum())
-tt_qty = int(df_f[QTY_COLS].sum().sum())
+fat_sel_total = float(df_f[fat_col_sel].sum())
+qty_sel_total = int(df_f[qty_col_sel].sum())
+tm_sel_total = safe_div(fat_sel_total, qty_sel_total)
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Total de anúncios", br_int(total_ads))
-k2.metric("Faturamento total (4 janelas)", br_money(tt_fat))
-k3.metric("Quantidade total (4 janelas)", br_int(tt_qty))
-k4.metric("Ticket médio total", br_money(safe_div(tt_fat, tt_qty) if tt_qty else 0.0))
+# Concentração Curva A no período selecionado
+fat_sel_A = float(df_f.loc[df_f[curve_col_sel] == "A", fat_col_sel].sum())
+conc_A_sel = safe_div(fat_sel_A, fat_sel_total)
 
-st.divider()
+# Distribuição de curvas no período selecionado
+dist_sel = df_f[curve_col_sel].value_counts().reindex(["A","B","C","-"]).fillna(0).astype(int)
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["Dashboard", "Listas e Exportação", "Plano tático por produto", "Relatório Estratégico"]
+# Itens em risco continua baseado em lucro/tacos do 0-30 (regras atuais)
+itens_risco = int((df_f["risco_lucro"].isin(["Risco alto, prejuízo", "Risco médio, tacos alto"])).sum())
+
+def premium_metric(title, value, subtitle=None):
+    sub_html = f'<div class="premium-sub">{subtitle}</div>' if subtitle else ""
+    st.markdown(
+        f"""
+<div class="premium-card">
+  <div class="premium-title">{title}</div>
+  <div class="premium-value">{value}</div>
+  {sub_html}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with st.container():
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        premium_metric("Anúncios", br_int(total_ads))
+    with c2:
+        premium_metric(f"Faturamento {period_sel}", bm(fat_sel_total))
+    with c3:
+        premium_metric(f"Quantidade {period_sel}", br_int(qty_sel_total))
+    with c4:
+        premium_metric(f"Ticket médio {period_sel}", bm(tm_sel_total))
+    with c5:
+        premium_metric("Concentração Curva A", pct(conc_A_sel), "Dependência do topo")
+    with c6:
+        premium_metric("Itens em risco", br_int(itens_risco), "TACOS alto ou prejuízo")
+
+st.caption(
+    f"Parâmetros. TACOS limite {pct(tacos_limite)}. Margem pós ads mínima {pct(margem_pos_ads_min)}. Ticket mínimo para escalar {bm(ticket_min_escala)}."
 )
 
 # =========================
-# TAB 1: Dashboard
+# UI Components
 # =========================
-with tab1:
-    left, right = st.columns([1.2, 1])
+def segment_card(title, emoji, df_seg, subtitle, filename):
+    # status por produto
+    df_seg = df_seg.copy()
+    if "MLB" in df_seg.columns:
+        df_seg["Status"] = df_seg["MLB"].astype(str).map(get_status)
+    else:
+        df_seg["Status"] = "Novo"
 
-    with left:
-        st.subheader("Resumo por período")
-        show = kpi_df.copy()
-        show["Qtd"] = show["Qtd"].map(br_int)
-        show["Faturamento"] = show["Faturamento"].map(br_money)
-        show["Ticket médio"] = show["Ticket médio"].apply(lambda x: br_money(x) if pd.notna(x) else "-")
-        st.dataframe(show, use_container_width=True, hide_index=True)
+    inprog = int((df_seg["Status"] == "Em andamento").sum()) if "Status" in df_seg.columns else 0
 
-    with right:
-        st.subheader("Distribuição de curvas no período 0-30")
-        fig = px.bar(dist_0_30_df, x="Curva", y="Anúncios")
-        st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        colA, colB, colC, colD, colE = st.columns([2.2, 0.85, 0.95, 1.15, 1.35])
 
-    st.subheader("Faturamento por curva e período")
-    rev_rows = []
-    for p, cc, qq, ff in periods:
-        grp = df_f.groupby(cc)[ff].sum()
-        for curva in ["A", "B", "C", "-"]:
-            rev_rows.append({"Período": p, "Curva": curva, "Faturamento": float(grp.get(curva, 0.0))})
-    rev_df = pd.DataFrame(rev_rows)
-    fig2 = px.bar(rev_df, x="Período", y="Faturamento", color="Curva", barmode="group")
-    st.plotly_chart(fig2, use_container_width=True)
+        with colA:
+            st.markdown(f"### {emoji} {title}")
+            st.caption(subtitle)
 
-    st.subheader("Ticket médio (ponderado) por período")
-    tm_df = kpi_df.copy()
-    tm_df["Ticket médio"] = tm_df["Ticket médio"].fillna(0.0)
-    fig3 = px.line(tm_df, x="Período", y="Ticket médio", markers=True)
-    st.plotly_chart(fig3, use_container_width=True)
+        with colB:
+            st.metric("Itens", br_int(len(df_seg)))
 
-    st.divider()
+        with colC:
+            st.metric("Em andamento", br_int(inprog))
 
-    st.subheader("Top 40 por faturamento com ação sugerida")
-    sample_cols = ["MLB", "Título", "Curva 0-30", "Qntd 0-30", "Fat. 0-30", "Frente", "Ação sugerida",
-                   "tacos_0_30", "roas_0_30", "lucro_pos_ads_0_30", "risco_lucro"]
-    sample = ensure_cols(plan.sort_values("Fat total", ascending=False).head(40), sample_cols)
+        with colD:
+            if "Perda estimada" in df_seg.columns and df_seg["Perda estimada"].notna().any():
+                st.metric("Impacto", bm(float(df_seg["Perda estimada"].fillna(0).sum())))
+            elif "lucro_pos_ads_0_30" in df_seg.columns and df_seg["lucro_pos_ads_0_30"].notna().any():
+                st.metric("Lucro pós ads", bm(float(df_seg["lucro_pos_ads_0_30"].fillna(0).sum())))
+            else:
+                base = float(df_seg["Fat. 0-30"].fillna(0).sum()) if "Fat. 0-30" in df_seg.columns else 0.0
+                st.metric("Faturamento", bm(base))
 
-    sample["Fat. 0-30"] = sample["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    sample["tacos_0_30"] = sample["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    sample["roas_0_30"] = sample["roas_0_30"].apply(lambda x: round(float(x), 2) if pd.notna(x) else "-")
-    sample["lucro_pos_ads_0_30"] = sample["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
+        with colE:
+            export_cols = [
+                "MLB","Título","Frente","Prioridade","Score prioridade","Status","Ação curta",
+                "Curva 31-60","Curva 0-30","Qntd 31-60","Qntd 0-30",
+                "Fat. 0-30","Fat total","TM total",
+                "investimento_ads","tacos_0_30","roas_0_30",
+                "lucro_bruto_estimado_0_30","lucro_pos_ads_0_30","margem_pos_ads_%_0_30",
+                "risco_lucro",
+                "Plano 15 dias","Plano 30 dias"
+            ]
+            export_df = ensure_cols(df_seg, export_cols)
 
-    st.dataframe(sample, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Baixar CSV",
+                data=to_csv_bytes(export_df),
+                file_name=filename,
+                mime="text/csv",
+                use_container_width=True
+            )
+
 
 # =========================
-# TAB 2: Listas e Exportação
+# Page: Visão geral
 # =========================
-with tab2:
-    st.subheader("Exportação rápida em CSV")
-    st.caption("Jeito 1: baixe a lista, preencha custo/margem/ads nela, junte tudo num único arquivo de enriquecimento e suba no upload opcional.")
+if page == "Visão geral":
+    col_left, col_right = st.columns([1.45, 1.0])
 
-    extra_cols = []
-    for c in [
-        "custo_unitario", "margem_percentual", "investimento_ads",
-        "tacos_0_30", "roas_0_30",
-        "lucro_bruto_estimado_0_30", "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30",
-        "risco_lucro"
-    ]:
-        if c in df_f.columns:
-            extra_cols.append(c)
+    with col_left:
+        with st.container(border=True):
+            st.subheader(f"Distribuição de curvas no {period_sel}")
+            dist_df = pd.DataFrame({"Curva": dist_sel.index, "Anúncios": dist_sel.values})
+            fig = px.bar(dist_df, x="Curva", y="Anúncios")
+            st.plotly_chart(fig, use_container_width=True)
 
-    def enrich_df(base_df: pd.DataFrame) -> pd.DataFrame:
-        if not extra_cols:
-            return base_df.copy()
-        return base_df.merge(
-            df_f[["MLB"] + extra_cols].drop_duplicates("MLB"),
-            on="MLB",
-            how="left"
+        with st.container(border=True):
+            st.subheader("Faturamento por curva e período")
+            rev_rows = []
+            for p, cc, qq, ff in PERIODS:
+                grp = df_f.groupby(cc)[ff].sum()
+                for curva in ["A", "B", "C", "-"]:
+                    rev_rows.append({"Período": p, "Curva": curva, "Faturamento": float(grp.get(curva, 0.0))})
+            rev_df = pd.DataFrame(rev_rows)
+            fig2 = px.bar(rev_df, x="Período", y="Faturamento", color="Curva", barmode="group")
+            st.plotly_chart(fig2, use_container_width=True)
+
+    with col_right:
+        with st.container(border=True):
+            st.subheader("Resumo por período")
+            show = kpi_df.copy()
+            show["Qtd"] = show["Qtd"].map(br_int)
+            show["Faturamento"] = show["Faturamento"].map(br_money)
+            show["Ticket médio"] = show["Ticket médio"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+        with st.container(border=True):
+            st.subheader("Top prioridades agora")
+            cols = [
+                "Prioridade", "Score prioridade", "MLB", "Título", "Frente", "Ação curta",
+                "Curva 0-30", "Fat. 0-30", "tacos_0_30", "lucro_pos_ads_0_30", "risco_lucro"
+            ]
+            top = ensure_cols(plan.sort_values(["Score prioridade"], ascending=[False]).head(15), cols)
+            top["Fat. 0-30"] = top["Fat. 0-30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            top["tacos_0_30"] = top["tacos_0_30"].apply(lambda x: pct(x))
+            top["lucro_pos_ads_0_30"] = top["lucro_pos_ads_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            top["Score prioridade"] = top["Score prioridade"].apply(lambda x: round(float(x), 3) if pd.notna(x) else "-")
+            st.dataframe(top, use_container_width=True, hide_index=True)
+
+    st.subheader("Ações por frente")
+    seg_defesa = plan[plan["Frente"] == "DEFESA, Âncora"].copy().sort_values("Fat. 0-30", ascending=False)
+    seg_correcao_queda = plan[plan["Frente"] == "CORREÇÃO, Fuga de receita"].copy().sort_values("impacto_queda", ascending=False)
+    seg_ataque = plan[plan["Frente"] == "ATAQUE, Crescimento"].copy().sort_values("Fat. 0-30", ascending=False)
+    seg_limpeza = plan[plan["Frente"] == "LIMPEZA, Parado"].copy().sort_values("Fat. 0-30", ascending=False)
+
+    segment_card(
+        title="Defesa, Âncoras",
+        emoji="🛡",
+        df_seg=seg_defesa,
+        subtitle="Produtos âncora. Proteja estoque e conversão, depois escale com controle.",
+        filename="defesa_ancoras.csv"
+    )
+    segment_card(
+        title="Correção, Fuga de receita",
+        emoji="🧰",
+        df_seg=seg_correcao_queda,
+        subtitle=f"Produtos que caíram. Perda estimada total {bm(perda_total)}.",
+        filename="correcao_fuga_receita.csv"
+    )
+    segment_card(
+        title="Ataque, Crescimento",
+        emoji="🔥",
+        df_seg=seg_ataque,
+        subtitle="Produtos em ascensão e oportunidades. Escale o que dá lucro e mantém ticket.",
+        filename="ataque_crescimento.csv"
+    )
+    segment_card(
+        title="Limpeza, Parados",
+        emoji="🧹",
+        df_seg=seg_limpeza,
+        subtitle="Produtos parados, combos e inativação. Libere caixa e foco do catálogo.",
+        filename="limpeza_parados.csv"
+    )
+
+# =========================
+# Page: Diagnóstico e riscos
+# =========================
+if page == "Diagnóstico e riscos":
+    with st.container(border=True):
+        st.subheader("Diagnóstico macro")
+        cA, cB, cC, cD = st.columns(4)
+        cA.metric("Curva A", br_int(int(dist_sel.get("A", 0))))
+        cB.metric("Curva B", br_int(int(dist_sel.get("B", 0))))
+        cC.metric("Curva C", br_int(int(dist_sel.get("C", 0))))
+        cD.metric("Sem venda", br_int(int(dist_sel.get("-", 0))))
+
+        st.caption(
+            "Concentração alta em Curva A aumenta dependência do topo. "
+            "Concentração baixa reduz risco, mas pode indicar falta de foco nos melhores itens."
         )
 
-    anchors_export = enrich_df(anchors.copy())
-    inactivate_export = enrich_df(inactivate.copy())
-    revitalize_export = enrich_df(revitalize.copy())
-    opp_export = enrich_df(opp_50_60.copy())
-    drop_export = enrich_df(drop_alert.copy())
-    combo_export = enrich_df(dead_stock_combo.copy())
+    with st.container(border=True):
+        st.subheader("Ticket médio por período")
+        tm_df = kpi_df.copy()
+        tm_df["Ticket médio"] = tm_df["Ticket médio"].fillna(0.0)
+        fig = px.line(tm_df, x="Período", y="Ticket médio", markers=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    anchors_cols = ["MLB","Título","Fat total","Qtd total","TM total","Curva 0-30","Curva 31-60","Curva 61-90","Curva 91-120"] + extra_cols
-    inactivate_cols = ["MLB","Título","Fat total","Qtd total","Curva 0-30","Qntd 0-30","Qntd 31-60","Qntd 61-90"] + extra_cols
-    revitalize_cols = ["MLB","Título","Fat total","Qtd total","Curva 31-60","Curva 0-30","Qntd 31-60","Qntd 0-30"] + extra_cols
-    opp_cols = ["MLB","Título","Fat total","Curva 0-30","Qntd 0-30","Curva 31-60","Qntd 31-60"] + extra_cols
-    drop_cols = ["MLB","Título","Curva 31-60","Curva 61-90","Curva 0-30","Fat anterior ref","Fat. 0-30","Perda estimada"] + extra_cols
-    combo_cols = ["MLB","Título","TM histórico","Fat. 31-60","Fat. 61-90","Fat. 91-120","Fat. 0-30"] + extra_cols
-
-    anchors_export = ensure_cols(anchors_export, anchors_cols)
-    inactivate_export = ensure_cols(inactivate_export, inactivate_cols)
-    revitalize_export = ensure_cols(revitalize_export, revitalize_cols)
-    opp_export = ensure_cols(opp_export, opp_cols)
-    drop_export = ensure_cols(drop_export, drop_cols)
-    combo_export = ensure_cols(combo_export, combo_cols)
-
-    r1, r2, r3 = st.columns(3)
-    with r1:
-        st.markdown(f"**Âncoras:** {len(anchors_export)}")
-        st.download_button("Baixar CSV Âncoras", data=to_csv_bytes(anchors_export), file_name="ancoras.csv", mime="text/csv")
-    with r2:
-        st.markdown(f"**Inativar:** {len(inactivate_export)}")
-        st.download_button("Baixar CSV Inativar", data=to_csv_bytes(inactivate_export), file_name="inativar.csv", mime="text/csv")
-    with r3:
-        st.markdown(f"**Revitalizar:** {len(revitalize_export)}")
-        st.download_button("Baixar CSV Revitalizar", data=to_csv_bytes(revitalize_export), file_name="revitalizar.csv", mime="text/csv")
-
-    r4, r5, r6 = st.columns(3)
-    with r4:
-        st.markdown(f"**Oportunidade 50 a 60:** {len(opp_export)}")
-        st.download_button("Baixar CSV Oportunidade 50 a 60", data=to_csv_bytes(opp_export), file_name="oportunidade_50_60.csv", mime="text/csv")
-    with r5:
-        st.markdown(f"**Fuga de receita:** {len(drop_export)}")
-        st.download_button("Baixar CSV Fuga de receita", data=to_csv_bytes(drop_export), file_name="fuga_receita.csv", mime="text/csv")
-    with r6:
-        st.markdown(f"**Combos e liquidação:** {len(combo_export)}")
-        st.download_button("Baixar CSV Combos", data=to_csv_bytes(combo_export), file_name="combos_liquidacao.csv", mime="text/csv")
-
-    st.divider()
-
-    with st.expander("Prévia: Fuga de receita (top 20 por perda)"):
-        show = drop_export.head(20).copy()
-        show["Fat anterior ref"] = show["Fat anterior ref"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        show["Fat. 0-30"] = show["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        show["Perda estimada"] = show["Perda estimada"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-        show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        st.dataframe(show, use_container_width=True, hide_index=True)
-
-# =========================
-# TAB 3: Plano tático por produto
-# =========================
-with tab3:
-    st.subheader("Plano tático 15 e 30 dias por produto")
-
-    fronts = sorted(plan["Frente"].unique().tolist())
-    front_filter = st.multiselect("Filtrar por Frente", options=fronts, default=fronts)
-
-    min_fat = st.number_input("Faturamento total mínimo", min_value=0.0, value=0.0, step=100.0)
-    text_search = st.text_input("Buscar por MLB ou Título", value="").strip().lower()
-
-    view = plan[plan["Frente"].isin(front_filter)].copy()
-    view = view[view["Fat total"] >= float(min_fat)].copy()
-
-    if text_search:
-        view = view[
-            view["MLB"].astype(str).str.lower().str.contains(text_search) |
-            view["Título"].astype(str).str.lower().str.contains(text_search)
-        ].copy()
-
-    cols = [
-        "MLB", "Título", "Frente",
-        "Curva 31-60", "Curva 0-30",
-        "Qntd 31-60", "Qntd 0-30",
-        "Fat. 0-30", "Fat total", "TM total",
-        "Ação sugerida", "Plano 15 dias", "Plano 30 dias",
-        "tacos_0_30", "roas_0_30", "lucro_pos_ads_0_30", "risco_lucro"
-    ]
-
-    view_show = ensure_cols(view.sort_values("Fat total", ascending=False), cols)
-
-    st.download_button(
-        "Baixar CSV do plano filtrado",
-        data=to_csv_bytes(view_show),
-        file_name="plano_tatico.csv",
-        mime="text/csv"
+    has_any_enrich = (not edf.empty) and (
+        ("investimento_ads" in df_f.columns) or ("custo_unitario" in df_f.columns) or ("margem_percentual" in df_f.columns)
     )
 
-    show = view_show.copy()
-    show["Fat. 0-30"] = show["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Fat total"] = show["Fat total"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["TM total"] = show["TM total"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    show["roas_0_30"] = show["roas_0_30"].apply(lambda x: round(float(x), 2) if pd.notna(x) else "-")
-    show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
+    with st.container(border=True):
+        st.subheader("Lucro e risco")
+        if not has_any_enrich:
+            st.info("Envie o arquivo opcional para ver lucro e risco por produto.")
+        else:
+            rcount = df_f["risco_lucro"].value_counts()
+            rr = pd.DataFrame({"Classificação": rcount.index, "Itens": rcount.values})
 
-    st.dataframe(show, use_container_width=True, hide_index=True)
+            col_l, col_r = st.columns([1.0, 1.4])
+            with col_l:
+                fig2 = px.bar(rr, x="Classificação", y="Itens")
+                st.plotly_chart(fig2, use_container_width=True)
+
+            with col_r:
+                st.markdown("### Alertas principais")
+                neg_count = int((pd.notna(df_f["lucro_pos_ads_0_30"]) & (df_f["lucro_pos_ads_0_30"] < 0)).sum())
+                high_tacos_count = int((pd.notna(df_f["tacos_0_30"]) & (df_f["tacos_0_30"] > tacos_limite)).sum())
+                st.write(f"- Itens com prejuízo pós ads: {br_int(neg_count)}")
+                st.write(f"- Itens com TACOS acima do limite: {br_int(high_tacos_count)}")
+                st.write("- Use o ranking para atacar o que tem dinheiro na mesa e cortar desperdício.")
+
+    if has_any_enrich:
+        with st.container(border=True):
+            st.subheader("Top prejuízo pós ads")
+            cols = ["MLB", "Título", "Curva 0-30", "Fat. 0-30", "investimento_ads", "tacos_0_30", "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30", "risco_lucro"]
+            neg = df_f[pd.notna(df_f["lucro_pos_ads_0_30"]) & (df_f["lucro_pos_ads_0_30"] < 0)].copy()
+            neg = neg.sort_values("lucro_pos_ads_0_30", ascending=True).head(15)
+            neg = ensure_cols(neg, cols)
+            neg["Fat. 0-30"] = neg["Fat. 0-30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            neg["investimento_ads"] = neg["investimento_ads"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            neg["tacos_0_30"] = neg["tacos_0_30"].apply(lambda x: pct(x))
+            neg["lucro_pos_ads_0_30"] = neg["lucro_pos_ads_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            neg["margem_pos_ads_%_0_30"] = neg["margem_pos_ads_%_0_30"].apply(lambda x: pct(x))
+            st.dataframe(neg, use_container_width=True, hide_index=True)
+
+        with st.container(border=True):
+            st.subheader("Top melhor lucro pós ads")
+            cols = ["MLB", "Título", "Curva 0-30", "Fat. 0-30", "investimento_ads", "tacos_0_30", "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30", "risco_lucro"]
+            pos = df_f[pd.notna(df_f["lucro_pos_ads_0_30"]) & (df_f["lucro_pos_ads_0_30"] > 0)].copy()
+            pos = pos.sort_values("lucro_pos_ads_0_30", ascending=False).head(15)
+            pos = ensure_cols(pos, cols)
+            pos["Fat. 0-30"] = pos["Fat. 0-30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            pos["investimento_ads"] = pos["investimento_ads"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            pos["tacos_0_30"] = pos["tacos_0_30"].apply(lambda x: pct(x))
+            pos["lucro_pos_ads_0_30"] = pos["lucro_pos_ads_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+            pos["margem_pos_ads_%_0_30"] = pos["margem_pos_ads_%_0_30"].apply(lambda x: pct(x))
+            st.dataframe(pos, use_container_width=True, hide_index=True)
+
+    with st.container(border=True):
+        st.subheader("Fuga de receita, foco cirúrgico")
+        st.caption(f"Perda estimada total {bm(perda_total)}")
+        cols = ["MLB", "Título", "Curva 31-60", "Curva 61-90", "Curva 0-30", "Fat anterior ref", "Fat. 0-30", "Perda estimada", "tacos_0_30", "lucro_pos_ads_0_30", "risco_lucro"]
+        fuga = ensure_cols(drop_alert.head(30), cols)
+        fuga["Fat anterior ref"] = fuga["Fat anterior ref"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        fuga["Fat. 0-30"] = fuga["Fat. 0-30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        fuga["Perda estimada"] = fuga["Perda estimada"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        fuga["tacos_0_30"] = fuga["tacos_0_30"].apply(lambda x: pct(x))
+        fuga["lucro_pos_ads_0_30"] = fuga["lucro_pos_ads_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        st.dataframe(fuga, use_container_width=True, hide_index=True)
 
 # =========================
-# TAB 4: Relatório Estratégico
+# Page: Plano tático e exportação
 # =========================
-with tab4:
-    st.subheader("Relatório Estratégico com Plano de Ação")
+if page == "Plano tático e exportação":
 
-    st.markdown("## 1. Diagnóstico Macro")
+    with st.container(border=True):
+        st.subheader("Status, ação em andamento")
+        st.caption("Marque o status por produto. Isso fica salvo enquanto o app estiver rodando.")
 
-    st.markdown("### 1.1 Cenário do período atual (0-30)")
-    st.write(f"Total de anúncios no arquivo: {br_int(total_ads)}")
-    st.dataframe(dist_0_30_df, use_container_width=True, hide_index=True)
+        editor_base = plan.sort_values(["Score prioridade"], ascending=False).head(60).copy()
+        editor_base["Status"] = editor_base["MLB"].astype(str).map(get_status)
+        editor_view = editor_base[["MLB", "Título", "Frente", "Prioridade", "Status"]].copy()
 
-    st.markdown("### 1.2 Volume vs Faturamento vs Ticket médio")
-    show_kpi = kpi_df.copy()
-    show_kpi["Qtd"] = show_kpi["Qtd"].map(br_int)
-    show_kpi["Faturamento"] = show_kpi["Faturamento"].map(br_money)
-    show_kpi["Ticket médio"] = show_kpi["Ticket médio"].apply(lambda x: br_money(x) if pd.notna(x) else "-")
-    st.dataframe(show_kpi, use_container_width=True, hide_index=True)
+        edited = st.data_editor(
+            editor_view,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Status": st.column_config.SelectboxColumn(
+                    "Status",
+                    options=STATUS_OPTIONS,
+                    required=True,
+                )
+            },
+            key="status_editor",
+        )
 
-    st.markdown("Leitura do ticket médio e impacto em margem")
-    st.write(tm_reading)
+        for _, r in edited.iterrows():
+            set_status(r["MLB"], r["Status"])
 
-    st.markdown("### 1.3 Concentração de faturamento na Curva A no 0-30")
-    st.write(f"Faturamento 0-30 total: {br_money(fat_0_30_total)}")
-    st.write(f"Faturamento 0-30 Curva A: {br_money(fat_0_30_A)}")
-    st.write(f"Concentração na Curva A: {round(float(conc_A_0_30 or 0.0) * 100, 2)}%")
+        # Export em Excel do status (para enviar ao cliente)
+        status_cols = [
+            "Prioridade", "Score prioridade", "MLB", "Título", "Frente", "Status", "Ação curta",
+            "Curva 0-30", "Curva 31-60", "Curva 61-90", "Curva 91-120",
+            "Fat. 0-30", "Fat. 31-60", "Fat. 61-90", "Fat. 91-120",
+            "Perda estimada", "risco_lucro",
+            "Plano 15 dias", "Plano 30 dias",
+        ]
+        status_df = plan.copy()
+        status_df["Status"] = status_df["MLB"].astype(str).map(get_status)
+        status_df = ensure_cols(status_df.sort_values(["Score prioridade"], ascending=False), status_cols)
 
-    st.divider()
-    st.markdown("## 2. Segmentação de Produtos")
+        xlsx_bytes = to_excel_bytes({"Status": status_df}, filename_hint="status")
+        st.download_button(
+            "Baixar Excel de Status (cliente)",
+            data=xlsx_bytes,
+            file_name="status_acao_em_andamento.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
-    st.markdown("### 2.1 Produtos Âncora")
-    top5_anchors = anchors.head(5).copy()
-    fat_sum_top5 = float(top5_anchors["Fat total"].sum()) if len(top5_anchors) else 0.0
-    st.write(f"Quantidade de âncoras: {br_int(len(anchors))}")
-    st.write(f"Top 5 âncoras, faturamento somado: {br_money(fat_sum_top5)}")
+    with st.container(border=True):
+        st.subheader("Ranking de prioridades")
+        top_k = st.slider("Mostrar top prioridades", min_value=20, max_value=200, value=80, step=10)
 
-    anchor_cols = ["MLB","Título","Fat total","Qtd total","TM total","tacos_0_30","lucro_pos_ads_0_30","risco_lucro"]
-    show = ensure_cols(top5_anchors, anchor_cols)
-    show["Fat total"] = show["Fat total"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Qtd total"] = show["Qtd total"].map(br_int)
-    show["TM total"] = show["TM total"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+        plan_view = plan.sort_values(["Score prioridade", "Fat. 0-30"], ascending=[False, False]).head(int(top_k))
 
-    st.markdown("### 2.2 Alerta de Queda, fuga de receita")
-    loss_total = float(drop_alert["Perda estimada"].sum()) if len(drop_alert) else 0.0
-    st.write(f"Produtos em fuga: {br_int(len(drop_alert))}")
-    st.write(f"Perda estimada somada: {br_money(loss_total)}")
+        cols = [
+            "Prioridade", "Score prioridade",
+            "MLB", "Título",
+            "Frente", "Ação curta",
+            "Curva 31-60", "Curva 0-30",
+            "Qntd 31-60", "Qntd 0-30",
+            "Fat. 0-30", "Fat total", "TM total",
+            "investimento_ads", "tacos_0_30", "roas_0_30",
+            "lucro_bruto_estimado_0_30", "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30",
+            "risco_lucro",
+            "Plano 15 dias", "Plano 30 dias"
+        ]
+        plan_show = ensure_cols(plan_view, cols)
 
-    drop_cols = ["MLB","Título","Curva 31-60","Curva 61-90","Curva 0-30","Fat anterior ref","Fat. 0-30","Perda estimada","tacos_0_30","lucro_pos_ads_0_30","risco_lucro"]
-    show = ensure_cols(drop_alert.head(20), drop_cols)
-    show["Fat anterior ref"] = show["Fat anterior ref"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Fat. 0-30"] = show["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Perda estimada"] = show["Perda estimada"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Baixar CSV do ranking",
+            data=to_csv_bytes(plan_show),
+            file_name="ranking_prioridades.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
-    st.markdown("### 2.3 Produtos em Ascensão")
-    rise_cols = ["MLB","Título","Curva 0-30","Curva 31-60","Curva 61-90","Fat. 0-30","Qntd 0-30","tacos_0_30","lucro_pos_ads_0_30","risco_lucro"]
-    show = ensure_cols(rise_to_A.head(20), rise_cols)
-    show["Fat. 0-30"] = show["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Qntd 0-30"] = show["Qntd 0-30"].map(br_int)
-    show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+        disp = plan_show.copy()
+        disp["Score prioridade"] = disp["Score prioridade"].apply(lambda x: round(float(x), 3) if pd.notna(x) else "-")
+        disp["Fat. 0-30"] = disp["Fat. 0-30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["Fat total"] = disp["Fat total"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["TM total"] = disp["TM total"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["investimento_ads"] = disp["investimento_ads"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["tacos_0_30"] = disp["tacos_0_30"].apply(lambda x: pct(x))
+        disp["roas_0_30"] = disp["roas_0_30"].apply(lambda x: round(float(x), 2) if pd.notna(x) else "-")
+        disp["lucro_bruto_estimado_0_30"] = disp["lucro_bruto_estimado_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["lucro_pos_ads_0_30"] = disp["lucro_pos_ads_0_30"].apply(lambda x: bm(x) if pd.notna(x) else "-")
+        disp["margem_pos_ads_%_0_30"] = disp["margem_pos_ads_%_0_30"].apply(lambda x: pct(x))
 
-    st.markdown("### 2.4 Estoque morto e combos ou liquidação")
-    combo_cols = ["MLB","Título","TM histórico","Fat. 31-60","Fat. 61-90","Fat. 91-120","tacos_0_30","lucro_pos_ads_0_30","risco_lucro"]
-    show = ensure_cols(dead_stock_combo.head(20), combo_cols)
-    show["TM histórico"] = show["TM histórico"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Fat. 31-60"] = show["Fat. 31-60"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Fat. 61-90"] = show["Fat. 61-90"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["Fat. 91-120"] = show["Fat. 91-120"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    show["tacos_0_30"] = show["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-    show["lucro_pos_ads_0_30"] = show["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    st.divider()
-    st.markdown("## 4. Plano Tático Operacional (15 e 30 Dias)")
+    with st.container(border=True):
+        st.subheader("Exportações")
+        export_exec_cols = [
+            "Prioridade", "MLB", "Título", "Frente", "Ação curta",
+            "Curva 0-30", "Fat. 0-30",
+            "Perda estimada", "tacos_0_30", "lucro_pos_ads_0_30", "risco_lucro"
+        ]
+        export_time_cols = [
+            "Prioridade", "Score prioridade", "MLB", "Título", "Frente", "Ação curta",
+            "Curva 31-60", "Curva 0-30",
+            "Qntd 31-60", "Qntd 0-30",
+            "Fat. 0-30", "investimento_ads", "tacos_0_30",
+            "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30", "risco_lucro",
+            "Plano 15 dias", "Plano 30 dias"
+        ]
+        exec_df = ensure_cols(plan.sort_values(["Score prioridade"], ascending=False), export_exec_cols)
+        time_df = ensure_cols(plan.sort_values(["Score prioridade"], ascending=False), export_time_cols)
 
-    front_order = ["LIMPEZA, Parado", "CORREÇÃO, Fuga de receita", "CORREÇÃO, Revitalizar", "ATAQUE, Crescimento", "DEFESA, Âncora", "Otimização"]
-    front_counts = plan["Frente"].value_counts()
-    front_df = pd.DataFrame({"Frente": front_order, "Itens": [int(front_counts.get(f, 0)) for f in front_order]})
-    st.dataframe(front_df, use_container_width=True, hide_index=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "Baixar CSV executivo",
+                data=to_csv_bytes(exec_df),
+                file_name="export_executivo.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with col2:
+            st.download_button(
+                "Baixar CSV do time",
+                data=to_csv_bytes(time_df),
+                file_name="export_time_planos.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
-    op_cols = ["Frente","MLB","Título","Curva 0-30","Fat. 0-30","Ação sugerida","Plano 15 dias","Plano 30 dias",
-               "tacos_0_30","roas_0_30","lucro_pos_ads_0_30","risco_lucro"]
-    op = ensure_cols(plan, op_cols).copy()
-    op = op.sort_values(["Frente", "Fat. 0-30"], ascending=[True, False])
+        
+        # Export executivo mais enxuto
+        plan_all = plan.copy()
+        plan_all["Status"] = plan_all["MLB"].astype(str).map(get_status)
+        exec_cols = [
+            "Prioridade","MLB","Título","Frente","Status","Ação curta",
+            "Fat. 0-30","Perda estimada","risco_lucro",
+            "Plano 15 dias","Plano 30 dias"
+        ]
+        exec_df = ensure_cols(plan_all.sort_values(["Score prioridade"], ascending=False), exec_cols)
 
-    st.download_button(
-        "Baixar CSV do plano operacional completo",
-        data=to_csv_bytes(op),
-        file_name="plano_operacional_completo.csv",
-        mime="text/csv"
-    )
+        st.download_button(
+            "Baixar CSV executivo (enxuto)",
+            data=to_csv_bytes(exec_df),
+            file_name="export_executivo_enxuto.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
-    for fr in front_order:
-        subset = op[op["Frente"] == fr].head(20).copy()
-        if len(subset) == 0:
-            continue
-        subset["Fat. 0-30"] = subset["Fat. 0-30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        subset["tacos_0_30"] = subset["tacos_0_30"].apply(lambda x: f"{round(float(x)*100,2)}%" if pd.notna(x) else "-")
-        subset["roas_0_30"] = subset["roas_0_30"].apply(lambda x: round(float(x), 2) if pd.notna(x) else "-")
-        subset["lucro_pos_ads_0_30"] = subset["lucro_pos_ads_0_30"].apply(lambda x: br_money(float(x)) if pd.notna(x) else "-")
-        st.markdown(f"#### {fr} (top 20 por faturamento 0-30)")
-        st.dataframe(subset, use_container_width=True, hide_index=True)
+    st.subheader("Listas rápidas")
+    st.caption("Baixe as listas, complete custo, margem e ads no seu arquivo de apoio e envie no upload opcional.")
+
+    seg_defesa = plan[plan["Frente"] == "DEFESA, Âncora"].copy().sort_values("Fat. 0-30", ascending=False)
+    seg_correcao_queda = plan[plan["Frente"] == "CORREÇÃO, Fuga de receita"].copy().sort_values("impacto_queda", ascending=False)
+    seg_correcao_rev = plan[plan["Frente"] == "CORREÇÃO, Revitalizar"].copy().sort_values("Fat. 0-30", ascending=False)
+    seg_ataque = plan[plan["Frente"] == "ATAQUE, Crescimento"].copy().sort_values("Fat. 0-30", ascending=False)
+    seg_limpeza = plan[plan["Frente"] == "LIMPEZA, Parado"].copy().sort_values("Fat. 0-30", ascending=False)
+
+    segment_card("Defesa, Âncoras", "🛡", seg_defesa, "Proteja e escale com controle.", "defesa_ancoras.csv")
+    segment_card("Correção, Fuga de receita", "🧰", seg_correcao_queda, "Recuperar o que caiu e devolve dinheiro.", "correcao_fuga_receita.csv")
+    segment_card("Correção, Revitalizar", "🧰", seg_correcao_rev, "Ajuste rápido para recuperar itens com potencial.", "correcao_revitalizar.csv")
+    segment_card("Ataque, Crescimento", "🔥", seg_ataque, "Escalar o que subiu e dá lucro.", "ataque_crescimento.csv")
+    segment_card("Limpeza, Parados", "🧹", seg_limpeza, "Cortar, pausar, combos e liquidação.", "limpeza_parados.csv")
+
+    with st.container(border=True):
+        st.subheader("Detalhe por produto")
+        st.caption("Use a busca na sidebar para achar um MLB e ver o plano completo.")
+
+        detail_cols = [
+            "MLB", "Título", "Frente", "Prioridade", "Score prioridade", "Ação curta",
+            "Curva 91-120", "Curva 61-90", "Curva 31-60", "Curva 0-30",
+            "Qntd 91-120", "Qntd 61-90", "Qntd 31-60", "Qntd 0-30",
+            "Fat. 91-120", "Fat. 61-90", "Fat. 31-60", "Fat. 0-30",
+            "investimento_ads", "tacos_0_30", "roas_0_30",
+            "lucro_pos_ads_0_30", "margem_pos_ads_%_0_30", "risco_lucro",
+            "Ação sugerida", "Plano 15 dias", "Plano 30 dias"
+        ]
+        detail = ensure_cols(plan.sort_values(["Score prioridade"], ascending=False).head(50), detail_cols)
+        detail["Score prioridade"] = detail["Score prioridade"].apply(lambda x: round(float(x), 3) if pd.notna(x) else "-")
+        st.dataframe(detail, use_container_width=True, hide_index=True)
