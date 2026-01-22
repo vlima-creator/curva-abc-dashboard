@@ -1,0 +1,258 @@
+
+/* ===== RESET E BASE ===== */
+* { 
+    font-variant-numeric: tabular-nums; 
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.block-container {
+    padding-top: 2rem; 
+    padding-bottom: 2rem; 
+    max-width: 1400px;
+    background-color: #000000;
+}
+
+/* Fundo geral do Streamlit */
+.stApp {
+    background-color: #000000;
+    color: #e0e0e0;
+}
+
+/* Header transparente */
+header[data-testid="stHeader"] {
+    background: rgba(0,0,0,0);
+}
+
+/* Esconde linhas separadoras */
+hr {
+    display: none !important;
+}
+
+/* ===== SIDEBAR LIQUID GLASS - FUNDO PRETO ===== */
+section[data-testid="stSidebar"] {
+    background: #000000 !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+section[data-testid="stSidebar"] .block-container {
+    padding-top: 2rem;
+    background: transparent;
+}
+
+/* ===== LIQUID GLASS CARDS COM HOVER VERDE MILITAR ===== */
+.glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+    background: rgba(82, 121, 111, 0.15);
+    border-color: rgba(82, 121, 111, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(82, 121, 111, 0.2);
+}
+
+/* ===== HERO HEADER ===== */
+.hero-header {
+    background: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    padding: 40px;
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.hero-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -1px;
+    color: #ffffff;
+}
+
+.hero-subtitle {
+    margin-top: 10px;
+    font-size: 1.1rem;
+    color: #888888;
+    font-weight: 400;
+}
+
+/* ===== METRIC GRID ===== */
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 2rem;
+}
+
+.metric-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.metric-card:hover {
+    background: rgba(82, 121, 111, 0.15);
+    border-color: rgba(82, 121, 111, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(82, 121, 111, 0.2);
+}
+
+.metric-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    color: #a0a0a0;
+    font-size: 1.2rem;
+}
+
+.metric-label {
+    font-size: 0.85rem;
+    color: #888888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0;
+}
+
+.metric-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 0;
+}
+
+/* ===== BUTTONS COM HOVER VERDE MILITAR ===== */
+div.stButton button, div.stDownloadButton button {
+    background: rgba(255, 255, 255, 0.05) !important;
+    backdrop-filter: blur(5px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #ffffff !important;
+    border-radius: 12px !important;
+    padding: 12px 24px !important;
+    font-weight: 500 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+div.stButton button:hover, div.stDownloadButton button:hover {
+    background: rgba(82, 121, 111, 0.25) !important;
+    border-color: rgba(82, 121, 111, 0.6) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(82, 121, 111, 0.3);
+}
+
+/* ===== TABS ===== */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(255, 255, 255, 0.02) !important;
+    padding: 6px !important;
+    border-radius: 16px !important;
+    gap: 8px !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    border: none !important;
+    color: #888888 !important;
+    border-radius: 12px !important;
+    padding: 10px 20px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(82, 121, 111, 0.15) !important;
+    color: #ffffff !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: rgba(82, 121, 111, 0.25) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(82, 121, 111, 0.4) !important;
+}
+
+/* ===== INPUTS COM HOVER VERDE MILITAR ===== */
+div[data-baseweb="input"], div[data-baseweb="select"] {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+div[data-baseweb="input"]:hover, div[data-baseweb="select"]:hover {
+    border-color: rgba(82, 121, 111, 0.4) !important;
+}
+
+div[data-baseweb="input"]:focus-within, div[data-baseweb="select"]:focus-within {
+    border-color: rgba(82, 121, 111, 0.6) !important;
+    box-shadow: 0 0 0 2px rgba(82, 121, 111, 0.1) !important;
+}
+
+/* ===== FILTROS COM HOVER VERDE MILITAR ===== */
+.stSelectbox, .stMultiSelect, .stSlider {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stSelectbox:hover, .stMultiSelect:hover, .stSlider:hover {
+    filter: brightness(1.2);
+}
+
+/* ===== GRÁFICOS PLOTLY COM BORDAS LIQUID GLASS ===== */
+.js-plotly-plot {
+    background: rgba(255, 255, 255, 0.03) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.js-plotly-plot:hover {
+    border-color: rgba(82, 121, 111, 0.4) !important;
+    box-shadow: 0 4px 16px rgba(82, 121, 111, 0.15) !important;
+}
+
+/* ===== DATAFRAMES COM BORDAS LIQUID GLASS ===== */
+.stDataFrame {
+    background: rgba(255, 255, 255, 0.03) !important;
+    backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 16px !important;
+    overflow: hidden !important;
+}
+
+/* ===== ÍCONES PADRONIZADOS ===== */
+.icon-standard {
+    color: #a0a0a0 !important;
+    font-size: 1.2rem !important;
+}
+
+/* Minimalist colors for accents */
+.text-purple { color: #a78bfa; }
+.text-blue { color: #60a5fa; }
+.text-green { color: #52796f; }
+.text-amber { color: #fbbf24; }
+.text-rose { color: #fb7185; }
+
+.border-purple { border-left: 4px solid rgba(167, 139, 250, 0.5); }
+.border-blue { border-left: 4px solid rgba(96, 165, 250, 0.5); }
+.border-green { border-left: 4px solid rgba(82, 121, 111, 0.5); }
+.border-amber { border-left: 4px solid rgba(251, 191, 36, 0.5); }
+.border-rose { border-left: 4px solid rgba(251, 113, 133, 0.5); }
