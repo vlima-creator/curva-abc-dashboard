@@ -4,15 +4,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Imports dos novos módulos multi-canal
-from data_processing.factory import detect_and_process
-from ui.components.shopee_components import (
-    render_shopee_conversion_funnel,
-    render_shopee_engagement_metrics,
-    render_shopee_top_products,
-    render_shopee_abc_distribution
-)
-
 st.set_page_config(page_title="Curva ABC, Diagnóstico e Ações", layout="wide")
 
 # Forçar fundo preto absoluto via injeção direta
@@ -1588,12 +1579,11 @@ def ensure_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
 
 rank = {"-": 0, "C": 1, "B": 2, "A": 3}
 
-# Períodos em ordem decrescente (mais antigo primeiro)
 periods = [
-    ("91-120", "Curva 91-120", "Qntd 91-120", "Fat. 91-120"),
-    ("61-90", "Curva 61-90", "Qntd 61-90", "Fat. 61-90"),
-    ("31-60", "Curva 31-60", "Qntd 31-60", "Fat. 31-60"),
     ("0-30", "Curva 0-30", "Qntd 0-30", "Fat. 0-30"),
+    ("31-60", "Curva 31-60", "Qntd 31-60", "Fat. 31-60"),
+    ("61-90", "Curva 61-90", "Qntd 61-90", "Fat. 61-90"),
+    ("91-120", "Curva 91-120", "Qntd 91-120", "Fat. 91-120"),
 ]
 
 QTY_COLS = ["Qntd 0-30", "Qntd 31-60", "Qntd 61-90", "Qntd 91-120"]
@@ -1995,7 +1985,7 @@ with st.sidebar:
     <div class='sidebar-section-icon'>{package_svg}</div>
     <div>
       <div class='sidebar-section-title'>Upload de Dados</div>
-      <div class='sidebar-section-desc'>Mercado Livre ou Shopee</div>
+      <div class='sidebar-section-desc'>Relatórios do Mercado Livre</div>
     </div>
   </div>
 </div>
@@ -2003,13 +1993,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     
-    uploaded_files = st.file_uploader(
-        "📂 Carregar relatório(s) de vendas",
-        type=["xlsx", "xls"],
-        help="Suporta Mercado Livre e Shopee. Para Shopee, você pode enviar múltiplos arquivos.",
-        accept_multiple_files=True,
-        key="main_files"
-    )
+    main_file = st.file_uploader("Relatório de Vendas (120 dias)", type=["xlsx", "xls"], key="main_file", help="Arquivo exportado do Mercado Livre com dados de vendas dos últimos 120 dias")
 
     st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
 
@@ -2057,47 +2041,14 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-if not uploaded_files:
-    st.info("Faça upload do(s) relatório(s) de vendas (Mercado Livre ou Shopee) para começar.")
+if main_file is None:
+    st.info("Faça upload do relatório de vendas do Mercado Livre (120 dias) para começar.")
     st.stop()
 
 # =========================
 # Carregar dados
 # =========================
-# Detecta o canal baseado no primeiro arquivo
-try:
-    from data_processing.factory import detect_channel
-    canal_detectado = detect_channel(uploaded_files)
-    
-    # Armazena o canal no session_state
-    st.session_state['canal'] = canal_detectado
-    
-    # Exibe o canal detectado na sidebar
-    with st.sidebar:
-        st.markdown(f"""
-        <div class="sidebar-section">
-            <div class="sidebar-section-header">
-                <div class="sidebar-section-icon">🏪</div>
-                <div>
-                    <div class="sidebar-section-title">Canal Detectado</div>
-                    <div class="sidebar-section-desc">{canal_detectado}</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Processa conforme o canal
-    if canal_detectado == 'Shopee':
-        from data_processing.factory import detect_and_process
-        _, df, df_logistics, df_ads = detect_and_process(uploaded_files)
-    else:  # Mercado Livre - usa lógica original
-        df, df_logistics, df_ads = load_main(uploaded_files[0])
-    
-except Exception as e:
-    st.error(f"Erro ao processar arquivo(s): {str(e)}")
-    import traceback
-    st.error(traceback.format_exc())
-    st.stop()
+df, df_logistics, df_ads = load_main(main_file)
 
 if df.empty:
     st.warning("Nenhum dado válido encontrado no arquivo.")
@@ -2128,91 +2079,47 @@ kpi_df = pd.DataFrame(kpi_rows)
 # =========================
 # Segmentações
 # =========================
-# Adapta segmentações conforme o canal
-if st.session_state.get('canal') == 'Shopee':
-    # Para Shopee (período único), usa apenas curva atual
-    anchors = df_f[
-        (df_f["Curva 0-30"] == "A")
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    inactivate = df_f[
-        (df_f["Qntd 0-30"] == 0)
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    revitalize = df_f[
-        (df_f["Curva 0-30"].isin(["C", "-"])) &
-        (df_f["Qntd 0-30"] > 0)  # Teve vendas mas está em C ou -
-    ].sort_values("Fat total", ascending=False).copy()
-else:
-    # Para Mercado Livre (múltiplos períodos), usa histórico
-    anchors = df_f[
-        (df_f["Curva 0-30"] == "A") &
-        (df_f["Curva 31-60"].isin(["A", "B"])) &
-        (df_f["Curva 61-90"].isin(["A", "B"]))
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    inactivate = df_f[
-        (df_f["Qntd 0-30"] == 0) &
-        (df_f["Qntd 31-60"] == 0) &
-        (df_f["Qntd 61-90"] == 0)
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    revitalize = df_f[
-        (df_f["Curva 31-60"].isin(["A", "B"])) &
-        (df_f["Curva 0-30"].isin(["C", "-"]))
-    ].sort_values("Fat total", ascending=False).copy()
+anchors = df_f[
+    (df_f["Curva 0-30"] == "A") &
+    (df_f["Curva 31-60"].isin(["A", "B"])) &
+    (df_f["Curva 61-90"].isin(["A", "B"]))
+].sort_values("Fat total", ascending=False).copy()
 
-if st.session_state.get('canal') == 'Shopee':
-    # Para Shopee, adapta segmentações para período único
-    rise_to_A = df_f[
-        (df_f["Curva 0-30"] == "A") &
-        (df_f["Qntd 0-30"] > 0)
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    opp_50_60 = df_f[
-        (df_f["Curva 0-30"] == "B")
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    dead_stock_combo = df_f[
-        (df_f["Curva 0-30"] == "-") &
-        (df_f["Fat total"] > 0)
-    ].sort_values("TM total", ascending=False).copy()
-    
-    # Fuga de receita: produtos C ou - com bom ticket médio (potencial)
-    drop_alert = df_f[
-        (df_f["Curva 0-30"].isin(["C", "-"])) &
-        (df_f["TM total"] > df_f["TM total"].median())
-    ].copy()
-    
-    if len(drop_alert) > 0:
-        drop_alert["Perda estimada"] = drop_alert["TM total"] * 10  # Estima perda baseada no TM
-        drop_alert = drop_alert.sort_values("Perda estimada", ascending=False)
-else:
-    # Para Mercado Livre, usa lógica original com histórico
-    rise_to_A = df_f[
-        (df_f["Curva 31-60"].isin(["B", "C"])) &
-        (df_f["Curva 0-30"] == "A")
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    opp_50_60 = df_f[
-        (df_f["Curva 0-30"] == "B") &
-        (df_f["Qntd 0-30"] >= df_f["Qntd 31-60"] * 1.1)
-    ].sort_values("Fat total", ascending=False).copy()
-    
-    dead_stock_combo = df_f[
-        (df_f["Curva 0-30"] == "-") &
-        (df_f["Fat total"] > 0)
-    ].sort_values("TM total", ascending=False).copy()
-    
-    drop_alert = df_f[
-        (df_f["Curva 31-60"].isin(["A", "B"])) &
-        (df_f["Curva 0-30"].isin(["C", "-"]))
-    ].copy()
-    
-    if len(drop_alert) > 0:
-        drop_alert["Fat anterior ref"] = drop_alert[["Fat. 31-60", "Fat. 61-90"]].max(axis=1)
-        drop_alert["Perda estimada"] = drop_alert["Fat anterior ref"] - drop_alert["Fat. 0-30"]
-        drop_alert = drop_alert.sort_values("Perda estimada", ascending=False)
+inactivate = df_f[
+    (df_f["Qntd 0-30"] == 0) &
+    (df_f["Qntd 31-60"] == 0) &
+    (df_f["Qntd 61-90"] == 0)
+].sort_values("Fat total", ascending=False).copy()
+
+revitalize = df_f[
+    (df_f["Curva 31-60"].isin(["A", "B"])) &
+    (df_f["Curva 0-30"].isin(["C", "-"]))
+].sort_values("Fat total", ascending=False).copy()
+
+rise_to_A = df_f[
+    (df_f["Curva 31-60"].isin(["B", "C"])) &
+    (df_f["Curva 0-30"] == "A")
+].sort_values("Fat total", ascending=False).copy()
+
+opp_50_60 = df_f[
+    (df_f["Curva 0-30"] == "B") &
+    (df_f["Qntd 0-30"] >= df_f["Qntd 31-60"] * 1.1)
+].sort_values("Fat total", ascending=False).copy()
+
+dead_stock_combo = df_f[
+    (df_f["Curva 0-30"] == "-") &
+    (df_f["Fat total"] > 0)
+].sort_values("TM total", ascending=False).copy()
+
+drop_alert = df_f[
+    (df_f["Curva 31-60"].isin(["A", "B"])) &
+    (df_f["Curva 0-30"].isin(["C", "-"]))
+].copy()
+
+if len(drop_alert) > 0:
+    drop_alert["Fat anterior ref"] = drop_alert[["Fat. 31-60", "Fat. 61-90"]].max(axis=1)
+    drop_alert["Perda estimada"] = drop_alert["Fat anterior ref"] - drop_alert["Fat. 0-30"]
+    drop_alert = drop_alert.sort_values("Perda estimada", ascending=False)
 
 # =========================
 # Plano tático
@@ -2221,42 +2128,18 @@ plan = df_f.copy()
 
 def suggest_action(row):
     c0, c1 = row["Curva 0-30"], row["Curva 31-60"]
-    
-    # Para Shopee (sem histórico), usa apenas curva atual
-    if st.session_state.get('canal') == 'Shopee':
-        if c0 == "A":
-            return "Garantir estoque 30d + otimizar fotos/título + avaliar Shopee Ads"
-        elif c0 == "B":
-            return "Testar Shopee Ads com palavras-chave específicas (cauda longa)"
-        elif c0 == "C":
-            # Verifica se tem bom ticket médio (potencial)
-            tm_total = row.get("TM total", 0)
-            if tm_total > 0:
-                return "Diagnosticar gargalo (CTR/conversão) + melhorar imagens/descrição"
-            else:
-                return "Testar preço promocional + bundle ou liquidar"
-        elif c0 == "-":
-            # Verifica se teve faturamento (dead stock) ou é inativo
-            fat_total = row.get("Fat total", 0)
-            if fat_total > 0:
-                return "Criar bundle com produto âncora ou participar Shopee Liquida"
-            else:
-                return "Testar preço promocional última chance ou desativar"
-        return "-"
-    
-    # Para Mercado Livre (com histórico), usa comparação de períodos
     if c0 == "A" and c1 in ["A", "B"]:
-        return "Garantir estoque 30-60d + completar ficha técnica 100% + avaliar ML Ads"
+        return "Manter estoque e conversão"
     if c0 == "A" and c1 in ["C", "-"]:
-        return "Subiu rápido – validar se é sazonal ou tendência antes de escalar"
+        return "Subiu rápido – validar se é sazonal"
     if c0 == "B" and c1 == "A":
-        return "Caiu de A→B: diagnosticar (CTR/conversão/Buy Box) + corrigir gargalo"
+        return "Caiu de A para B – investigar"
     if c0 == "B" and c1 in ["B", "C"]:
-        return "Potencial de crescimento: otimizar anúncio (conversão >2%) + testar ML Ads"
+        return "Estável ou subindo – monitorar"
     if c0 == "C":
-        return "Diagnosticar gargalo (foto/preço/descrição) + testar promoção ou kit"
+        return "Avaliar promoção ou combo"
     if c0 == "-":
-        return "Sem giro: otimizar última chance (preço/foto) ou liquidar e liberar capital"
+        return "Sem giro – considerar liquidar"
     return "-"
 
 plan["Ação sugerida"] = plan.apply(suggest_action, axis=1)
@@ -2267,74 +2150,39 @@ actions["15d"] = "-"
 actions["30d"] = "-"
 
 # DEFESA - Âncoras (produtos A estáveis)
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[anchors.index, "7d"] = "Garantir estoque 30-60d + monitorar taxa resposta (100%) + checar prazo entrega"
-    actions.loc[anchors.index, "15d"] = "Adicionar foto uso real + tabela medidas + responder FAQ na descrição"
-    actions.loc[anchors.index, "30d"] = "Testar Shopee Ads (cauda longa) se ACOS < margem + criar bundle upsell"
-else:
-    actions.loc[anchors.index, "7d"] = "Estoque 30-60d + monitorar Buy Box + validar reputação (resposta <24h, reclamações <1%)"
-    actions.loc[anchors.index, "15d"] = "Completar ficha técnica 100% + adicionar vídeo 15-30s + organizar variações"
-    actions.loc[anchors.index, "30d"] = "Se conversão >2%: testar ML Ads (cauda longa, ACOS <25-30%) + Full/Flex"
+actions.loc[anchors.index, "7d"] = "Checar estoque crítico"
+actions.loc[anchors.index, "15d"] = "Verificar buybox e preço"
+actions.loc[anchors.index, "30d"] = "Monitorar concorrência"
 
-# CORREÇÃO - Queda de faturamento / Fuga de receita
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[drop_alert.index, "7d"] = "Diagnosticar: CTR baixo (imagem/título) ou conversão baixa (descrição/preço/frete)"
-    actions.loc[drop_alert.index, "15d"] = "Testar nova capa (zoom produto + selo benefício) + expandir descrição com FAQ"
-    actions.loc[drop_alert.index, "30d"] = "Participar Flash Sale (margem mín aceitável) + cupom prazo limitado"
-else:
-    actions.loc[drop_alert.index, "7d"] = "Diagnosticar: CTR <1% (foto/título) ou conversão <2% (preço/descrição/frete) + comparar concorrentes"
-    actions.loc[drop_alert.index, "15d"] = "Corrigir gargalo: foto fundo branco + título otimizado + FAQ na descrição + ajustar preço"
-    actions.loc[drop_alert.index, "30d"] = "Se ajustes não funcionaram: oferta relâmpago ou cupom + responder avaliações negativas"
+# CORREÇÃO - Queda de faturamento
+actions.loc[drop_alert.index, "7d"] = "Analisar causa da queda"
+actions.loc[drop_alert.index, "15d"] = "Ajustar preço ou anúncio"
+actions.loc[drop_alert.index, "30d"] = "Testar promoção ou ads"
 
 # CORREÇÃO - Reativar produtos
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[revitalize.index, "7d"] = "Ler avaliações negativas concorrentes + responder todas avaliações negativas"
-    actions.loc[revitalize.index, "15d"] = "Ajustar preço (usar âncora: cheio+desconto) + melhorar capa (fundo limpo)"
-    actions.loc[revitalize.index, "30d"] = "Cupom seguidor (criar base clientes) + monitorar se conversão voltou"
-else:
-    actions.loc[revitalize.index, "7d"] = "Diagnosticar problema: sem impressões (SEO) ou CTR baixo (foto) + verificar categoria correta"
-    actions.loc[revitalize.index, "15d"] = "Otimizar: título com palavra-chave + ficha técnica 100% + foto fundo branco + vídeo"
-    actions.loc[revitalize.index, "30d"] = "Testar preço promocional (abaixo média) + cupom + monitorar se conversão voltou"
+actions.loc[revitalize.index, "7d"] = "Verificar disponibilidade"
+actions.loc[revitalize.index, "15d"] = "Reativar e ajustar preço"
+actions.loc[revitalize.index, "30d"] = "Monitorar recuperação"
 
 # ATAQUE - Subindo para A
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[rise_to_A.index, "7d"] = "Estoque 30-60d + otimizar anúncio (conversão >2%) antes de investir Ads"
-    actions.loc[rise_to_A.index, "15d"] = "Ativar Shopee Ads: orçamento baixo + palavras cauda longa + monitorar ACOS"
-    actions.loc[rise_to_A.index, "30d"] = "Se ROAS >3: aumentar budget + participar campanhas (11.11, Black Friday)"
-else:
-    actions.loc[rise_to_A.index, "7d"] = "Estoque 60-90d + validar conversão >2% + completar ficha técnica 100% + Full/Flex"
-    actions.loc[rise_to_A.index, "15d"] = "Ativar ML Ads: orçamento baixo + palavras cauda longa + monitorar ACOS diariamente"
-    actions.loc[rise_to_A.index, "30d"] = "Se ACOS <25-30%: aumentar budget + participar ofertas relâmpago + monitorar posição orgânica"
+actions.loc[rise_to_A.index, "7d"] = "Verificar estoque"
+actions.loc[rise_to_A.index, "15d"] = "Garantir abastecimento"
+actions.loc[rise_to_A.index, "30d"] = "Escalar se margem ok"
 
 # ATAQUE - Oportunidades B/C
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[opp_50_60.index, "7d"] = "Calcular margem líquida + ACOS máx aceitável + volume busca categoria"
-    actions.loc[opp_50_60.index, "15d"] = "Testar Ads: termos específicos (ex: 'sapato social preto 40' > 'sapato')"
-    actions.loc[opp_50_60.index, "30d"] = "Ajustar lances (alto rendimento: +lance | baixo: pausar) + criar bundles"
-else:
-    actions.loc[opp_50_60.index, "7d"] = "Calcular margem líquida + ACOS máx aceitável + otimizar anúncio (conversão >2%)"
-    actions.loc[opp_50_60.index, "15d"] = "Testar ML Ads: termos específicos (ex: 'tênis corrida nike 42' > 'tênis') + monitorar CTR"
-    actions.loc[opp_50_60.index, "30d"] = "Ajustar lances (alto ROAS: +lance | baixo: pausar) + testar kit com produto âncora"
+actions.loc[opp_50_60.index, "7d"] = "Avaliar potencial"
+actions.loc[opp_50_60.index, "15d"] = "Testar ads ou destaque"
+actions.loc[opp_50_60.index, "30d"] = "Promover para curva A"
 
 # LIMPEZA - Combo/Kit
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[dead_stock_combo.index, "7d"] = "Analisar: quem comprou também comprou? Pesquisar combos concorrentes"
-    actions.loc[dead_stock_combo.index, "15d"] = "Criar bundle (dead stock + âncora) desconto 10-20% + anúncio novo"
-    actions.loc[dead_stock_combo.index, "30d"] = "Se bundle não funcionou: Shopee Liquida com preço agressivo"
-else:
-    actions.loc[dead_stock_combo.index, "7d"] = "Analisar: quem comprou também comprou? Pesquisar kits concorrentes + avaliar margem kit"
-    actions.loc[dead_stock_combo.index, "15d"] = "Criar kit (dead stock + âncora) desconto 10-20% + anúncio novo otimizado + variações"
-    actions.loc[dead_stock_combo.index, "30d"] = "Se kit não vendeu: liquidação agressiva (preço abaixo custo) + oferta relâmpago"
+actions.loc[dead_stock_combo.index, "7d"] = "Identificar parceiros"
+actions.loc[dead_stock_combo.index, "15d"] = "Montar combo ou kit"
+actions.loc[dead_stock_combo.index, "30d"] = "Liquidar se não girar"
 
 # LIMPEZA - Inativar
-if st.session_state.get('canal') == 'Shopee':
-    actions.loc[inactivate.index, "7d"] = "Calcular custo oportunidade (capital imobilizado) + verificar se obsoleto"
-    actions.loc[inactivate.index, "15d"] = "Liquidação: preço agressivo + frete grátis + comunicar 'Última Chance'"
-    actions.loc[inactivate.index, "30d"] = "Se não vendeu: desativar + liquidar lote ou doar (crédito fiscal)"
-else:
-    actions.loc[inactivate.index, "7d"] = "Calcular custo oportunidade (capital imobilizado) + diagnosticar: obsoleto ou anúncio ruim?"
-    actions.loc[inactivate.index, "15d"] = "Liquidação: preço agressivo + frete grátis + comunicar 'Última Chance' + ML Ads baixo orçamento"
-    actions.loc[inactivate.index, "30d"] = "Se não vendeu: desativar + liquidar lote (revendedores) ou doar (crédito fiscal)"
+actions.loc[inactivate.index, "7d"] = "Avaliar se vale manter"
+actions.loc[inactivate.index, "15d"] = "Pausar anúncio"
+actions.loc[inactivate.index, "30d"] = "Remover do catálogo"
 
 # OTIMIZAÇÃO - Produtos que não se encaixam em outras frentes
 # Identificar índices de otimização (todos que não estão nas outras frentes)
@@ -2396,14 +2244,9 @@ fat_0_30_total = float(df_f["Fat. 0-30"].sum())
 fat_0_30_A = float(df_f.loc[df_f["Curva 0-30"] == "A", "Fat. 0-30"].sum())
 conc_A_0_30 = safe_div(fat_0_30_A, fat_0_30_total)
 
-# Busca ticket médio usando os nomes de período
-tm_0_30_row = kpi_df.loc[kpi_df["Período"] == "0-30", "Ticket médio"]
-tm_31_60_row = kpi_df.loc[kpi_df["Período"] == "31-60", "Ticket médio"]
-tm_61_90_row = kpi_df.loc[kpi_df["Período"] == "61-90", "Ticket médio"]
-
-tm_0_30 = float(tm_0_30_row.iloc[0]) if len(tm_0_30_row) > 0 else 0.0
-tm_31_60 = float(tm_31_60_row.iloc[0]) if len(tm_31_60_row) > 0 else 0.0
-tm_61_90 = float(tm_61_90_row.iloc[0]) if len(tm_61_90_row) > 0 else 0.0
+tm_0_30 = float(kpi_df.loc[kpi_df["Período"] == "0-30", "Ticket médio"].iloc[0])
+tm_31_60 = float(kpi_df.loc[kpi_df["Período"] == "31-60", "Ticket médio"].iloc[0])
+tm_61_90 = float(kpi_df.loc[kpi_df["Período"] == "61-90", "Ticket médio"].iloc[0])
 
 def tm_direction(a, b, c):
     if np.isnan(a) or np.isnan(b) or np.isnan(c):
@@ -2522,77 +2365,53 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
         section_footer()
 
-    # Seções específicas por canal
-    if st.session_state.get('canal') == 'Mercado Livre':
-        # Seção de Logística (apenas Mercado Livre)
-        if not df_logistics.empty:
-            log_row = df_logistics[df_logistics['periodo'] == selected_period]
-            if not log_row.empty:
-                log_row = log_row.iloc[0]
-                render_logistics_section(
-                    full_pct=log_row['full_pct'],
-                    correios_pct=log_row['correios_pct'],
-                    flex_pct=log_row['flex_pct'],
-                    outros_pct=log_row['outros_pct'],
-                    period=selected_period
-                )
-        else:
-            # Fallback para cálculo antigo se não tiver dados de logística
-            if all(c in df_f.columns for c in [f"Share Full Qtd {selected_period}", f"Share Full Fat {selected_period}"]):
-                section_header(f"Logística no Período {selected_period}", "Distribuição FULL vs NÃO FULL", "🚚", "cyan")
-                qtd_total = float(df_f[qty_col].sum())
-                fat_total = float(df_f[fat_col].sum())
-                share_full_qtd = (
-                    (df_f[qty_col] * df_f[f"Share Full Qtd {selected_period}"]).sum() / qtd_total
-                    if qtd_total > 0 else 0.0
-                )
-                share_full_fat = (
-                    (df_f[fat_col] * df_f[f"Share Full Fat {selected_period}"]).sum() / fat_total
-                    if fat_total > 0 else 0.0
-                )
-                dom = "FULL" if share_full_qtd >= 0.5 else "NÃO FULL"
-                
-                render_metric_grid([
-                    ("FULL por Quantidade", pct(share_full_qtd, 1), "📦", "cyan"),
-                    ("FULL por Faturamento", pct(share_full_fat, 1), "💵", "green"),
-                    ("Logística Dominante", dom, "🏆", "purple" if dom == "FULL" else "amber"),
-                ])
-                section_footer()
+    # Seção de Logística com todas as formas de entrega
+    if not df_logistics.empty:
+        log_row = df_logistics[df_logistics['periodo'] == selected_period]
+        if not log_row.empty:
+            log_row = log_row.iloc[0]
+            render_logistics_section(
+                full_pct=log_row['full_pct'],
+                correios_pct=log_row['correios_pct'],
+                flex_pct=log_row['flex_pct'],
+                outros_pct=log_row['outros_pct'],
+                period=selected_period
+            )
+    else:
+        # Fallback para cálculo antigo se não tiver dados de logística
+        if all(c in df_f.columns for c in [f"Share Full Qtd {selected_period}", f"Share Full Fat {selected_period}"]):
+            section_header(f"Logística no Período {selected_period}", "Distribuição FULL vs NÃO FULL", "🚚", "cyan")
+            qtd_total = float(df_f[qty_col].sum())
+            fat_total = float(df_f[fat_col].sum())
+            share_full_qtd = (
+                (df_f[qty_col] * df_f[f"Share Full Qtd {selected_period}"]).sum() / qtd_total
+                if qtd_total > 0 else 0.0
+            )
+            share_full_fat = (
+                (df_f[fat_col] * df_f[f"Share Full Fat {selected_period}"]).sum() / fat_total
+                if fat_total > 0 else 0.0
+            )
+            dom = "FULL" if share_full_qtd >= 0.5 else "NÃO FULL"
+            
+            render_metric_grid([
+                ("FULL por Quantidade", pct(share_full_qtd, 1), "📦", "cyan"),
+                ("FULL por Faturamento", pct(share_full_fat, 1), "💵", "green"),
+                ("Logística Dominante", dom, "🏆", "purple" if dom == "FULL" else "amber"),
+            ])
+            section_footer()
 
-        # Seção de Vendas por Publicidade (apenas Mercado Livre)
-        if not df_ads.empty:
-            ads_row = df_ads[df_ads['periodo'] == selected_period]
-            if not ads_row.empty:
-                ads_row = ads_row.iloc[0]
-                render_ads_section(
-                    ads_pct=ads_row['ads_pct'],
-                    organic_pct=ads_row['organic_pct'],
-                    ads_qty=int(ads_row['ads_qty']),
-                    organic_qty=int(ads_row['organic_qty']),
-                    period=selected_period
-                )
-    
-    elif st.session_state.get('canal') == 'Shopee':
-        # Seções específicas da Shopee
-        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
-        
-        # Funil de Conversão
-        render_shopee_conversion_funnel(df_f)
-        
-        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
-        
-        # Métricas de Engajamento
-        render_shopee_engagement_metrics(df_f)
-        
-        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
-        
-        # Distribuição ABC
-        render_shopee_abc_distribution(df_f)
-        
-        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
-        
-        # Top Produtos
-        render_shopee_top_products(df_f, top_n=10)
+    # Seção de Vendas por Publicidade
+    if not df_ads.empty:
+        ads_row = df_ads[df_ads['periodo'] == selected_period]
+        if not ads_row.empty:
+            ads_row = ads_row.iloc[0]
+            render_ads_section(
+                ads_pct=ads_row['ads_pct'],
+                organic_pct=ads_row['organic_pct'],
+                ads_qty=int(ads_row['ads_qty']),
+                organic_qty=int(ads_row['organic_qty']),
+                period=selected_period
+            )
 
     section_header("Faturamento por Curva e Período", "Comparativo entre as janelas de tempo", "📊", "green")
     rev_rows = []
@@ -2607,8 +2426,7 @@ with tab1:
         y="Faturamento", 
         color="Curva", 
         barmode="group",
-        color_discrete_map=colors_map,
-        category_orders={"Período": ["91-120", "61-90", "31-60", "0-30"]}  # Ordem decrescente
+        color_discrete_map=colors_map
     )
     fig2.update_layout(
         plot_bgcolor='rgba(0,0,0,0)',
@@ -2627,8 +2445,7 @@ with tab1:
         tm_df, 
         x="Período", 
         y="Ticket médio", 
-        markers=True,
-        category_orders={"Período": ["91-120", "61-90", "31-60", "0-30"]}  # Ordem decrescente
+        markers=True
     )
     fig3.update_traces(line_color='#f59e0b', marker_color='#fbbf24', line_width=3, marker_size=10)
     fig3.update_layout(
