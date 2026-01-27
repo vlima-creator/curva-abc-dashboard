@@ -9,6 +9,7 @@ from data_processing.factory import detect_and_process
 from ui.components.shopee_components import (
     render_shopee_conversion_funnel,
     render_shopee_engagement_metrics,
+    render_shopee_top_rejection_rate,
     render_shopee_top_products,
     render_shopee_abc_distribution
 )
@@ -2582,6 +2583,11 @@ with tab1:
         
         # Métricas de Engajamento
         render_shopee_engagement_metrics(df_f)
+        
+        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
+        
+        # Top 5 Produtos com Maior Taxa de Rejeição
+        render_shopee_top_rejection_rate(df_f)
         
         st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
         

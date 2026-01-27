@@ -196,6 +196,112 @@ def render_shopee_engagement_metrics(df_export: pd.DataFrame):
         """, unsafe_allow_html=True)
 
 
+def render_shopee_top_rejection_rate(df_export: pd.DataFrame):
+    """
+    Renderiza os Top 5 produtos com maior taxa de rejeição
+    """
+    st.markdown("""
+    <div class="section-box">
+        <div class="section-header">
+            <div class="section-icon">⚠️</div>
+            <div>
+                <div class="section-title">Top 5 Produtos com Maior Taxa de Rejeição</div>
+                <div class="section-desc">Produtos que precisam de atenção imediata para melhorar conversão</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Filtrar produtos com dados válidos
+    df_valid = df_export[
+        (df_export['_shopee_taxa_rejeicao'].notna()) & 
+        (df_export['_shopee_taxa_rejeicao'] > 0) &
+        (df_export['_shopee_visitantes'] > 0)
+    ].copy()
+    
+    if df_valid.empty:
+        st.info("⚠️ Não há dados de taxa de rejeição disponíveis.")
+        return
+    
+    # Ordenar por taxa de rejeição (maior para menor) e pegar top 5
+    top_rejection = df_valid.nlargest(5, '_shopee_taxa_rejeicao')[[
+        'Título', '_shopee_taxa_rejeicao', '_shopee_visitantes', 
+        '_shopee_taxa_conversao', 'Fat total'
+    ]].copy()
+    
+    # Renomear colunas para exibição
+    top_rejection.columns = ['Produto', 'Taxa Rejeição', 'Visitantes', 'Taxa Conversão', 'Faturamento']
+    
+    # Formatar valores
+    top_rejection['Taxa Rejeição'] = top_rejection['Taxa Rejeição'].apply(lambda x: f"{x*100:.1f}%")
+    top_rejection['Taxa Conversão'] = top_rejection['Taxa Conversão'].apply(lambda x: f"{x*100:.2f}%")
+    top_rejection['Faturamento'] = top_rejection['Faturamento'].apply(lambda x: f"R$ {x:,.2f}")
+    top_rejection['Visitantes'] = top_rejection['Visitantes'].apply(lambda x: f"{int(x):,}")
+    
+    # Resetar índice e adicionar ranking
+    top_rejection = top_rejection.reset_index(drop=True)
+    top_rejection.index = top_rejection.index + 1
+    top_rejection.index.name = '#'
+    
+    # Exibir tabela estilizada
+    st.dataframe(
+        top_rejection,
+        use_container_width=True,
+        height=250
+    )
+    
+    # Adicionar dica de ação
+    st.markdown("""
+    <div style="
+        background: #fff8e1;
+        border: 1px solid #ffd54f;
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 16px;
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+    ">
+        <div style="
+            background: #ffd54f;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 20px;
+        ">
+            💡
+        </div>
+        <div style="flex: 1;">
+            <div style="
+                font-weight: 600;
+                font-size: 16px;
+                color: #1a1a1a;
+                margin-bottom: 8px;
+            ">
+                Ação Recomendada
+            </div>
+            <div style="
+                font-size: 14px;
+                color: #333333;
+                line-height: 1.6;
+            ">
+                Produtos com alta taxa de rejeição precisam de otimização urgente:
+                <ul style="margin: 8px 0 0 20px; padding-left: 0;">
+                    <li style="margin-bottom: 4px;">Melhorar qualidade das fotos (zoom, fundo limpo, uso real)</li>
+                    <li style="margin-bottom: 4px;">Revisar título e descrição (clareza, benefícios, FAQ)</li>
+                    <li style="margin-bottom: 4px;">Ajustar preço ou destacar diferenciais</li>
+                    <li style="margin-bottom: 4px;">Verificar avaliações negativas e responder</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_shopee_top_products(df_export: pd.DataFrame, top_n: int = 10):
     """
     Renderiza tabela de top produtos da Shopee.
