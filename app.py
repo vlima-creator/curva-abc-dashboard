@@ -12,6 +12,7 @@ from ui.components.shopee_components import (
     render_shopee_top_products,
     render_shopee_abc_distribution
 )
+from ui.components.helpers import to_xlsx_bytes, br_money, br_int, safe_div, pct, ensure_cols
 
 st.set_page_config(page_title="Curva ABC, Diagnóstico e Ações", layout="wide")
 
@@ -1538,9 +1539,9 @@ def render_front_card(icon: str, title: str, desc: str, itens: int, fat: float, 
     )
     st.download_button(
         f"📥 Baixar {title}",
-        data=to_csv_bytes(df_seg),
+        data=to_xlsx_bytes(df_seg),
         file_name=filename,
-        mime="text/csv",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key=f"dl_{title}_{filename}",
     )
 
@@ -1574,9 +1575,7 @@ def pct(x, decimals=1) -> str:
     except Exception:
         return "-"
 
-def to_csv_bytes(dataframe: pd.DataFrame) -> bytes:
-    csv = dataframe.to_csv(index=False, sep=";", encoding="utf-8-sig")
-    return csv.encode("utf-8-sig")
+
 
 def ensure_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
     """Garante que todas as colunas existam antes do recorte (evita KeyError)."""
@@ -2728,29 +2727,29 @@ with tab2:
     
     with col1:
         st.markdown(render_export_card("🛡️", "Âncoras", "Produtos estáveis em curva A", len(anchors_export), get_fat(anchors_export), "defense"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(anchors_export), file_name="ancoras.csv", mime="text/csv", key="exp_anc", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(anchors_export), file_name="ancoras.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_anc", use_container_width=True)
     
     with col2:
         st.markdown(render_export_card("⚠️", "Fuga de Receita", "Produtos que caíram de curva", len(drop_export), get_fat(drop_export), "correction"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(drop_export), file_name="fuga_receita.csv", mime="text/csv", key="exp_drop", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(drop_export), file_name="fuga_receita.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_drop", use_container_width=True)
     
     with col3:
         st.markdown(render_export_card("🚀", "Crescimento", "Produtos em ascensão", len(opp_export), get_fat(opp_export), "attack"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(opp_export), file_name="crescimento.csv", mime="text/csv", key="exp_opp", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(opp_export), file_name="crescimento.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_opp", use_container_width=True)
 
     col4, col5, col6 = st.columns(3)
     
     with col4:
         st.markdown(render_export_card("🧹", "Inativar", "Produtos sem giro", len(inactivate_export), get_fat(inactivate_export), "cleanup"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(inactivate_export), file_name="inativar.csv", mime="text/csv", key="exp_ina", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(inactivate_export), file_name="inativar.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_ina", use_container_width=True)
     
     with col5:
         st.markdown(render_export_card("🔄", "Revitalizar", "Produtos para recuperar", len(revitalize_export), get_fat(revitalize_export), "opportunity"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(revitalize_export), file_name="revitalizar.csv", mime="text/csv", key="exp_rev", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(revitalize_export), file_name="revitalizar.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_rev", use_container_width=True)
     
     with col6:
         st.markdown(render_export_card("🎁", "Combos/Liquidação", "Produtos para kits", len(combo_export), get_fat(combo_export), "combo"), unsafe_allow_html=True)
-        st.download_button("📥 Baixar CSV", data=to_csv_bytes(combo_export), file_name="combos.csv", mime="text/csv", key="exp_combo", use_container_width=True)
+        st.download_button("📥 Baixar Excel", data=to_xlsx_bytes(combo_export), file_name="combos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="exp_combo", use_container_width=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2890,10 +2889,10 @@ with tab3:
 
     # Botão de download
     st.download_button(
-        "📥 Baixar CSV do Plano Filtrado",
-        data=to_csv_bytes(view_show),
-        file_name="plano_tatico.csv",
-        mime="text/csv",
+        "📥 Baixar Excel do Plano Filtrado",
+        data=to_xlsx_bytes(view_show),
+        file_name="plano_tatico.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
@@ -3029,9 +3028,9 @@ with tab4:
 
     st.download_button(
         "📥 Baixar Plano Operacional Completo",
-        data=to_csv_bytes(op),
-        file_name="plano_operacional_completo.csv",
-        mime="text/csv",
+        data=to_xlsx_bytes(op),
+        file_name="plano_operacional_completo.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
