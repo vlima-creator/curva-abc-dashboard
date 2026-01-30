@@ -201,7 +201,7 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 /* ===== LOGISTICA CARD ===== */
 .logistics-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin: 1rem 0;
 }
@@ -251,6 +251,7 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 .logistics-value.full { color: #4ade80; }
 .logistics-value.correios { color: #60a5fa; }
 .logistics-value.flex { color: #fbbf24; }
+.logistics-value.coleta { color: #a78bfa; }
 .logistics-value.outros { color: #9ca3af; }
 
 .logistics-bar {
@@ -268,6 +269,7 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
 .logistics-bar-fill.full { background: linear-gradient(90deg, #22c55e, #4ade80); }
 .logistics-bar-fill.correios { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
 .logistics-bar-fill.flex { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.logistics-bar-fill.coleta { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
 .logistics-bar-fill.outros { background: linear-gradient(90deg, #6b7280, #9ca3af); }
 
 /* ===== ADS CARD ===== */
@@ -1248,7 +1250,7 @@ def render_metric_grid(metrics: list):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: float, outros_pct: float, period: str):
+def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: float, coleta_pct: float, outros_pct: float, period: str):
     """Renderiza seção de logística com todas as formas de entrega"""
     truck_svg = get_svg_icon("truck")
     package_svg = get_svg_icon("package")
@@ -1284,6 +1286,14 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
       <div class="logistics-value flex">{flex_pct:.1f}%</div>
       <div class="logistics-bar">
         <div class="logistics-bar-fill flex" style="width: {flex_pct}%"></div>
+      </div>
+    </div>
+    <div class="logistics-card coleta">
+      <div class="logistics-icon">{package_svg}</div>
+      <div class="logistics-title">Coleta</div>
+      <div class="logistics-value coleta">{coleta_pct:.1f}%</div>
+      <div class="logistics-bar">
+        <div class="logistics-bar-fill coleta" style="width: {coleta_pct}%"></div>
       </div>
     </div>
   </div>
@@ -1826,7 +1836,8 @@ def _transform_ml_raw(file) -> tuple:
     base['is_full'] = log_lower.str.contains('full', na=False)
     base['is_correios'] = log_lower.str.contains('correios', na=False) | log_lower.str.contains('pontos', na=False) | log_lower.str.contains('ponto de envio', na=False)
     base['is_flex'] = log_lower.str.contains('flex', na=False)
-    base['is_outros'] = ~(base['is_full'] | base['is_correios'] | base['is_flex'])
+    base['is_coleta'] = log_lower.str.contains('coleta', na=False)
+    base['is_outros'] = ~(base['is_full'] | base['is_correios'] | base['is_flex'] | base['is_coleta'])
     
     # Classificar vendas por publicidade: "Sim" = venda via Ads, Vazio/outros = Orgânica
     # Normaliza valores e verifica se é "sim" ou variações
@@ -1850,6 +1861,7 @@ def _transform_ml_raw(file) -> tuple:
             full_qty = int(periodo_df[periodo_df['is_full']]['unidades'].sum())
             correios_qty = int(periodo_df[periodo_df['is_correios']]['unidades'].sum())
             flex_qty = int(periodo_df[periodo_df['is_flex']]['unidades'].sum())
+            coleta_qty = int(periodo_df[periodo_df['is_coleta']]['unidades'].sum())
             outros_qty = int(periodo_df[periodo_df['is_outros']]['unidades'].sum())
             
             logistics_data.append({
@@ -1857,10 +1869,12 @@ def _transform_ml_raw(file) -> tuple:
                 'full_pct': (full_qty / total_qty) * 100,
                 'correios_pct': (correios_qty / total_qty) * 100,
                 'flex_pct': (flex_qty / total_qty) * 100,
+                'coleta_pct': (coleta_qty / total_qty) * 100,
                 'outros_pct': (outros_qty / total_qty) * 100,
                 'full_qty': full_qty,
                 'correios_qty': correios_qty,
                 'flex_qty': flex_qty,
+                'coleta_qty': coleta_qty,
                 'outros_qty': outros_qty,
                 'total_qty': total_qty
             })
@@ -1880,8 +1894,8 @@ def _transform_ml_raw(file) -> tuple:
         else:
             logistics_data.append({
                 'periodo': periodo,
-                'full_pct': 0, 'correios_pct': 0, 'flex_pct': 0, 'outros_pct': 0,
-                'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'outros_qty': 0, 'total_qty': 0
+                'full_pct': 0, 'correios_pct': 0, 'flex_pct': 0, 'coleta_pct': 0, 'outros_pct': 0,
+                'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'coleta_qty': 0, 'outros_qty': 0, 'total_qty': 0
             })
             ads_data.append({
                 'periodo': periodo,
@@ -2602,6 +2616,7 @@ with tab1:
                     full_pct=log_row['full_pct'],
                     correios_pct=log_row['correios_pct'],
                     flex_pct=log_row['flex_pct'],
+                    coleta_pct=log_row['coleta_pct'],
                     outros_pct=log_row['outros_pct'],
                     period=selected_period
                 )
