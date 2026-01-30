@@ -1324,6 +1324,41 @@ def render_ads_section(ads_pct: float, organic_pct: float, ads_qty: int, organic
     """
     st.markdown(html, unsafe_allow_html=True)
 
+def render_abc_quadrant(df_abc_summary: pd.DataFrame, df_abc_details: pd.DataFrame, period: str):
+    """Renderiza o quadrante com 3 cards (Curva A, B, C) e botão de exportação com lista detalhada."""
+    section_header(f"Resumo Curva ABC - Período {period}", "Total de anúncios e faturamento por classificação", "📊", "green")
+    
+    cols = st.columns(3)
+    colors = {"Curva A": "#22c55e", "Curva B": "#3b82f6", "Curva C": "#f59e0b"}
+    icons = {"Curva A": "⭐", "Curva B": "📈", "Curva C": "📦"}
+    
+    for i, (_, row) in enumerate(df_abc_summary.iterrows()):
+        curva = row['Curva']
+        color = colors.get(curva, "#ffffff")
+        icon = icons.get(curva, "📦")
+        
+        with cols[i]:
+            st.markdown(f"""
+            <div class="logistics-card" style="border-top: 4px solid {color}; padding: 20px; text-align: center; background: rgba(255,255,255,0.02); border-radius: 16px;">
+                <div style="font-size: 1.5rem; margin-bottom: 8px;">{icon}</div>
+                <div class="logistics-title" style="font-size: 0.85rem; font-weight: 700; text-transform: uppercase; color: #ffffff;">{curva}</div>
+                <div class="logistics-value" style="font-size: 1.5rem; font-weight: 800; color: {color};">{br_money(row['Faturamento'])}</div>
+                <div style="font-size: 0.85rem; opacity: 0.7; margin-top: 4px; color: #ffffff;">{br_int(row['Anúncios'])} Anúncios</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+    
+    # Botão de exportação logo abaixo dos cards
+    st.download_button(
+        label=f"📥 Gerar Relatório Excel Curva ABC ({period})",
+        data=to_xlsx_bytes(df_abc_details),
+        file_name=f"relatorio_curva_abc_{period.replace('-', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key=f"btn_abc_{period}"
+    )
+
 def render_export_card(icon: str, title: str, desc: str, itens: int, fat: float, card_type: str):
     """Renderiza card de exportação com estatísticas"""
     icon_map = {
@@ -2521,6 +2556,40 @@ with tab1:
         fig.update_traces(marker_line_width=0)
         st.plotly_chart(fig, use_container_width=True)
         section_footer()
+
+    # Quadrante Curva ABC (Novo)
+    abc_rows = []
+    # Detalhes para o Excel
+    df_abc_details = df_f[df_f[curve_col].isin(["A", "B", "C"])].copy()
+    # Selecionar e renomear colunas para o padrão solicitado
+    export_cols = {
+        "MLB": "MLB",
+        "Título": "Título",
+        qty_col: "Qtd Vendida",
+        fat_col: "Faturamento",
+        curve_col: "Curva"
+    }
+    df_abc_details = df_abc_details[list(export_cols.keys())].rename(columns=export_cols)
+    # Calcular Ticket Médio (Valor de venda unitário)
+    df_abc_details["Ticket Médio"] = df_abc_details.apply(lambda r: safe_div(r["Faturamento"], r["Qtd Vendida"]), axis=1)
+    # Garantir que a quantidade seja inteiro
+    df_abc_details["Qtd Vendida"] = df_abc_details["Qtd Vendida"].fillna(0).astype(int)
+    # Reordenar colunas para o Ticket Médio ficar após a Qtd Vendida
+    final_cols = ["MLB", "Título", "Qtd Vendida", "Ticket Médio", "Faturamento", "Curva"]
+    df_abc_details = df_abc_details[final_cols].sort_values(["Curva", "Faturamento"], ascending=[True, False])
+
+    for curva in ["A", "B", "C"]:
+        mask = df_f[curve_col] == curva
+        abc_rows.append({
+            "Curva": f"Curva {curva}",
+            "Anúncios": int(mask.sum()),
+            "Faturamento": float(df_f.loc[mask, fat_col].sum())
+        })
+    df_abc_summary = pd.DataFrame(abc_rows)
+    
+    render_abc_quadrant(df_abc_summary, df_abc_details, selected_period)
+    section_footer()
+    st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
     # Seções específicas por canal
     if st.session_state.get('canal') == 'Mercado Livre':
