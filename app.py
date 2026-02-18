@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import history_manager
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -2097,48 +2098,16 @@ with st.sidebar:
     st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
 
     # Seção de Filtros
-    target_svg = get_svg_icon("target")
-    st.markdown(
-        f"""
-<div class='sidebar-section'>
-  <div class='sidebar-section-header'>
-    <div class='sidebar-section-icon'>{target_svg}</div>
-    <div>
-      <div class='sidebar-section-title'>Filtros Globais</div>
-      <div class='sidebar-section-desc'>Selecione as curvas para análise</div>
-    </div>
-  </div>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Filtros Globais removidos conforme solicitado
+    curve_filter = ["A", "B", "C", "-"]
+    
+    # Identificação do Cliente
+    st.markdown("---")
+    st.markdown("### 👤 Identificação da Conta")
+    cliente_nome = st.text_input("Nome do Cliente / Conta", value="Geral", help="Digite o nome do cliente para isolar o histórico e as comparações.")
+    st.session_state['cliente_atual'] = cliente_nome
 
-    curve_filter = st.multiselect(
-        "Curvas 0-30",
-        options=["A", "B", "C", "-"],
-        default=["A", "B", "C", "-"],
-        help="A = Top 80% faturamento | B = Próximos 15% | C = Últimos 5% | - = Sem vendas"
-    )
-    
-    # Dica
-    st.markdown(
-        """
-<div class='sidebar-tip'>
-  <strong>DICA:</strong> Use as curvas para focar sua análise. Curva A são seus produtos estrela!
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    # Versão
-    st.markdown(
-        """
-<div class='sidebar-version'>
-  Dashboard v4.3 • Manus AI
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Versão removida conforme solicitado
 
 if not uploaded_files:
     st.info("Faça upload do(s) relatório(s) de vendas (Mercado Livre ou Shopee) para começar.")
@@ -2504,19 +2473,90 @@ def tm_direction(a, b, c):
 tm_reading = tm_direction(tm_0_30, tm_31_60, tm_61_90)
 
 # =========================
-# KPIs topo
+# KPIs topo e Histórico
 # =========================
 total_ads = len(df_f)
 tt_fat = float(df_f[FAT_COLS].sum().sum())
 tt_qty = int(df_f[QTY_COLS].sum().sum())
+tm_geral = safe_div(tt_fat, tt_qty) if tt_qty else 0.0
 
-# Renderiza métricas principais
-render_metric_grid([
-    ("Total de Anúncios", br_int(total_ads), "📦", "purple"),
-    ("Faturamento Total", br_money(tt_fat), "💰", "green"),
-    ("Quantidade Total", br_int(tt_qty), "📊", "blue"),
-    ("Ticket Médio", br_money(safe_div(tt_fat, tt_qty) if tt_qty else 0.0), "🎯", "amber"),
-])
+# Preparar snapshot atual
+canal_atual = st.session_state.get('canal', 'Mercado Livre')
+cliente_atual = st.session_state.get('cliente_atual', 'Geral')
+
+fuga_count = len(drop_alert) if 'drop_alert' in locals() else 0
+fuga_valor = float(drop_alert['Perda estimada'].sum()) if 'drop_alert' in locals() and not drop_alert.empty else 0.0
+ancoras_count = len(anchors) if 'anchors' in locals() else 0
+ancoras_valor = float(anchors['Fat total'].sum()) if 'anchors' in locals() and not anchors.empty else 0.0
+
+# Pegar dados de Ads do período 0-30 para o snapshot
+ads_pct_snap = 0.0
+ads_valor_snap = 0.0
+organic_valor_snap = 0.0
+if not df_ads.empty:
+    ads_row_snap = df_ads[df_ads['periodo'] == '0-30']
+    if not ads_row_snap.empty:
+        ads_row_snap = ads_row_snap.iloc[0]
+        ads_pct_snap = float(ads_row_snap.get('ads_pct', 0))
+        ads_valor_snap = float(ads_row_snap.get('ads_value', 0))
+        organic_valor_snap = float(ads_row_snap.get('organic_value', 0))
+
+current_metrics = {
+    "cliente": cliente_atual,
+    "canal": canal_atual,
+    "total_ads": total_ads,
+    "total_fat": tt_fat,
+    "total_qty": tt_qty,
+    "conc_a": float(conc_A_0_30),
+    "tm_atual": tm_geral,
+    "fuga_receita_count": fuga_count,
+    "fuga_receita_valor": fuga_valor,
+    "ancoras_count": ancoras_count,
+    "ancoras_valor": ancoras_valor,
+    "ads_pct": ads_pct_snap,
+    "ads_valor": ads_valor_snap,
+    "organic_valor": organic_valor_snap
+}
+
+# Botão para salvar snapshot
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 🕒 Gestão de Histórico")
+    st.info(f"Conta ativa: **{cliente_atual}**")
+    if st.button("💾 Salvar Snapshot Atual", use_container_width=True, help="Salva as métricas atuais para comparação futura"):
+        history_manager.save_snapshot(current_metrics)
+        st.success(f"Snapshot de '{cliente_atual}' salvo com sucesso!")
+        st.rerun()
+
+# Buscar último snapshot para comparação
+last_snap = history_manager.get_last_snapshot(cliente_atual, canal_atual)
+
+def render_comparison_metric(label, current_val, last_val, is_money=False, is_pct=False):
+    delta = None
+    delta_color = "normal"
+    if last_val is not None and last_val != 0:
+        diff = current_val - last_val
+        pct_change = (diff / last_val) * 100
+        delta = f"{pct_change:+.1f}%"
+        if pct_change > 0.1:
+            delta_color = "inverse" if "Fuga" in label else "normal"
+        elif pct_change < -0.1:
+            delta_color = "normal" if "Fuga" in label else "inverse"
+    
+    val_str = br_money(current_val) if is_money else (f"{current_val:.1f}%" if is_pct else br_int(current_val))
+    return label, val_str, delta
+
+# Renderiza métricas principais com comparação
+m1_label, m1_val, m1_delta = render_comparison_metric("Total de Anúncios", total_ads, last_snap['total_ads'] if last_snap else None)
+m2_label, m2_val, m2_delta = render_comparison_metric("Faturamento Total", tt_fat, last_snap['total_fat'] if last_snap else None, is_money=True)
+m3_label, m3_val, m3_delta = render_comparison_metric("Quantidade Total", tt_qty, last_snap['total_qty'] if last_snap else None)
+m4_label, m4_val, m4_delta = render_comparison_metric("Ticket Médio", tm_geral, last_snap['tm_atual'] if last_snap else None, is_money=True)
+
+col1, col2, col3, col4 = st.columns(4)
+with col1: st.metric(m1_label, m1_val, m1_delta)
+with col2: st.metric(m2_label, m2_val, m2_delta)
+with col3: st.metric(m3_label, m3_val, m3_delta)
+with col4: st.metric(m4_label, m4_val, m4_delta)
 
 st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
@@ -3179,12 +3219,90 @@ with tab4:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # Seção 4: Histórico de Evolução
+    st.markdown(render_report_section("activity", "Histórico de Evolução", "Acompanhamento das métricas ao longo do tempo", "blue"), unsafe_allow_html=True)
+    
+    history_df = history_manager.get_history(cliente_atual, canal_atual)
+    if not history_df.empty:
+        # Garantir ordem cronológica (antigo para novo)
+        history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
+        history_df = history_df.sort_values('timestamp').reset_index(drop=True)
+        
+        # Criar rótulos sequenciais para o eixo X (Análise 1, Análise 2, ...)
+        history_df['Analise'] = [f"Análise {i+1}" for i in history_df.index]
+        
+        # Gráfico de evolução do faturamento
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=history_df['Analise'], y=history_df['total_fat'], name='Faturamento Total', line=dict(color='#10b981', width=3), hovertext=history_df['timestamp'].dt.strftime('%d/%m/%Y %H:%M')))
+        fig.add_trace(go.Scatter(x=history_df['Analise'], y=history_df['ancoras_valor'], name='Faturamento Âncoras', line=dict(color='#3b82f6', width=2, dash='dot')))
+        
+        fig.update_layout(
+            title="Evolução do Faturamento (Total vs Âncoras)",
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=300,
+            xaxis=dict(type='category')
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Gráfico de evolução da Fuga de Receita
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            fig_fuga_qty = go.Figure()
+            fig_fuga_qty.add_trace(go.Bar(x=history_df['Analise'], y=history_df['fuga_receita_count'], name='Qtd Produtos', marker_color='#f59e0b', hovertext=history_df['timestamp'].dt.strftime('%d/%m/%Y %H:%M')))
+            fig_fuga_qty.update_layout(
+                title="Qtd Produtos em Fuga",
+                template="plotly_dark",
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=20, r=20, t=40, b=20),
+                height=250,
+                xaxis=dict(type='category')
+            )
+            st.plotly_chart(fig_fuga_qty, use_container_width=True)
+        
+        with col_f2:
+            fig_fuga_val = go.Figure()
+            fig_fuga_val.add_trace(go.Scatter(x=history_df['Analise'], y=history_df['fuga_receita_valor'], name='Perda Estimada', fill='tozeroy', line=dict(color='#ef4444'), hovertext=history_df['timestamp'].dt.strftime('%d/%m/%Y %H:%M')))
+            fig_fuga_val.update_layout(
+                title="Valor da Perda Estimada (R$)",
+                template="plotly_dark",
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=20, r=20, t=40, b=20),
+                height=250,
+                xaxis=dict(type='category')
+            )
+            st.plotly_chart(fig_fuga_val, use_container_width=True)
+        
+        # Tabela de histórico detalhada
+        st.markdown("#### Detalhes dos Snapshots")
+        hist_show = history_df.copy()
+        hist_show['Data'] = hist_show['timestamp'].dt.strftime('%d/%m/%Y %H:%M')
+        hist_show['Faturamento'] = hist_show['total_fat'].apply(br_money)
+        hist_show['Conc. Curva A'] = hist_show['conc_a'].apply(lambda x: f"{x*100:.1f}%")
+        hist_show['Ticket Médio'] = hist_show['tm_atual'].apply(br_money)
+        hist_show['Fuga (Qtd)'] = hist_show['fuga_receita_count']
+        hist_show['Perda Fuga'] = hist_show['fuga_receita_valor'].apply(br_money)
+        
+        st.dataframe(
+            hist_show[['Data', 'Faturamento', 'Conc. Curva A', 'Ticket Médio', 'Fuga (Qtd)', 'Perda Fuga']],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Ainda não há histórico salvo para este canal. Use o botão 'Salvar Snapshot Atual' na barra lateral para começar a rastrear sua evolução.")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
 # Footer
 st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
 st.markdown(
     """
     <div style="text-align: center; opacity: 0.5; font-size: 0.85rem; padding: 20px 0;">
-        📊 Curva ABC Dashboard v4.3 | Análise inteligente para decisões rápidas
+        Desenvolvido por Vinicius Lima/ CNPJ: 47.192.694/0001-70
     </div>
     """,
     unsafe_allow_html=True
