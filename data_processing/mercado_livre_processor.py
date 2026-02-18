@@ -206,10 +206,16 @@ class MercadoLivreProcessor(BaseProcessor):
         
         rec = base['receita']
         if rec.dtype == object:
-            rec = (rec.astype(str)
-                     .str.replace('\u00a0', '', regex=False)
-                     .str.replace('.', '', regex=False)
-                     .str.replace(',', '.', regex=False))
+            rec = rec.astype(str).str.replace('\u00a0', '', regex=False).str.strip()
+            # Se contiver tanto '.' quanto ',', assume formato BR (1.234,56)
+            if rec.str.contains(r'\.', regex=True).any() and rec.str.contains(r',', regex=True).any():
+                rec = rec.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            # Se contiver apenas ',', assume que é o separador decimal (1234,56)
+            elif rec.str.contains(r',', regex=True).any():
+                rec = rec.str.replace(',', '.', regex=False)
+            # Remove símbolos de moeda se existirem
+            rec = rec.str.replace(r'[R\$\s]', '', regex=True)
+            
         base['receita'] = pd.to_numeric(rec, errors='coerce').fillna(0.0)
         
         if base.empty:
@@ -218,7 +224,8 @@ class MercadoLivreProcessor(BaseProcessor):
                    [f'Curva {p}' for p in ['0-30','31-60','61-90','91-120']]
             empty_df = pd.DataFrame(columns=cols)
             empty_log = pd.DataFrame(columns=['periodo', 'full_pct', 'correios_pct', 'flex_pct', 'outros_pct', 
-                                              'full_qty', 'correios_qty', 'flex_qty', 'outros_qty'])
+                                              'full_qty', 'correios_qty', 'flex_qty', 'outros_qty',
+                                              'full_fat', 'correios_fat', 'flex_fat', 'outros_fat'])
             empty_ads = pd.DataFrame(columns=['periodo', 'ads_pct', 'organic_pct', 'ads_qty', 'organic_qty'])
             return empty_df, empty_log, empty_ads
         
@@ -319,6 +326,11 @@ class MercadoLivreProcessor(BaseProcessor):
                 flex_qty = base_p['is_flex'].sum()
                 outros_qty = base_p['is_outros'].sum()
                 
+                full_fat = base_p[base_p['is_full']]['receita'].sum()
+                correios_fat = base_p[base_p['is_correios']]['receita'].sum()
+                flex_fat = base_p[base_p['is_flex']]['receita'].sum()
+                outros_fat = base_p[base_p['is_outros']]['receita'].sum()
+                
                 log_rows.append({
                     'periodo': p,
                     'full_pct': full_qty / total,
@@ -328,13 +340,18 @@ class MercadoLivreProcessor(BaseProcessor):
                     'full_qty': int(full_qty),
                     'correios_qty': int(correios_qty),
                     'flex_qty': int(flex_qty),
-                    'outros_qty': int(outros_qty)
+                    'outros_qty': int(outros_qty),
+                    'full_fat': float(full_fat),
+                    'correios_fat': float(correios_fat),
+                    'flex_fat': float(flex_fat),
+                    'outros_fat': float(outros_fat)
                 })
             else:
                 log_rows.append({
                     'periodo': p,
                     'full_pct': 0, 'correios_pct': 0, 'flex_pct': 0, 'outros_pct': 0,
-                    'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'outros_qty': 0
+                    'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'outros_qty': 0,
+                    'full_fat': 0.0, 'correios_fat': 0.0, 'flex_fat': 0.0, 'outros_fat': 0.0
                 })
         
         df_logistics = pd.DataFrame(log_rows)
@@ -349,12 +366,17 @@ class MercadoLivreProcessor(BaseProcessor):
                 ads_qty = base_p['is_ads'].sum()
                 organic_qty = base_p['is_organic'].sum()
                 
+                ads_value = base_p[base_p['is_ads']]['receita'].sum()
+                organic_value = base_p[base_p['is_organic']]['receita'].sum()
+                
                 ads_rows.append({
                     'periodo': p,
                     'ads_pct': ads_qty / total,
                     'organic_pct': organic_qty / total,
                     'ads_qty': int(ads_qty),
-                    'organic_qty': int(organic_qty)
+                    'organic_qty': int(organic_qty),
+                    'ads_value': float(ads_value),
+                    'organic_value': float(organic_value)
                 })
             else:
                 ads_rows.append({
@@ -362,7 +384,9 @@ class MercadoLivreProcessor(BaseProcessor):
                     'ads_pct': 0,
                     'organic_pct': 0,
                     'ads_qty': 0,
-                    'organic_qty': 0
+                    'organic_qty': 0,
+                    'ads_value': 0.0,
+                    'organic_value': 0.0
                 })
         
         df_ads = pd.DataFrame(ads_rows)

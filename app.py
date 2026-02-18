@@ -1250,7 +1250,8 @@ def render_metric_grid(metrics: list):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
-def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: float, coleta_pct: float, outros_pct: float, period: str):
+def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: float, coleta_pct: float, outros_pct: float, 
+                             full_fat: float, correios_fat: float, flex_fat: float, coleta_fat: float, outros_fat: float, period: str):
     """Renderiza seção de logística com todas as formas de entrega"""
     truck_svg = get_svg_icon("truck")
     package_svg = get_svg_icon("package")
@@ -1268,6 +1269,7 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
       <div class="logistics-icon">{package_svg}</div>
       <div class="logistics-title">Full</div>
       <div class="logistics-value full">{full_pct:.1f}%</div>
+      <div style="font-size: 0.85rem; font-weight: 700; color: #00f2ff; margin-bottom: 8px;">{br_money(full_fat)}</div>
       <div class="logistics-bar">
         <div class="logistics-bar-fill full" style="width: {full_pct}%"></div>
       </div>
@@ -1276,6 +1278,7 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
       <div class="logistics-icon">{package_svg}</div>
       <div class="logistics-title">Correios / Pontos</div>
       <div class="logistics-value correios">{correios_pct:.1f}%</div>
+      <div style="font-size: 0.85rem; font-weight: 700; color: #fbbf24; margin-bottom: 8px;">{br_money(correios_fat)}</div>
       <div class="logistics-bar">
         <div class="logistics-bar-fill correios" style="width: {correios_pct}%"></div>
       </div>
@@ -1284,6 +1287,7 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
       <div class="logistics-icon">{package_svg}</div>
       <div class="logistics-title">Flex</div>
       <div class="logistics-value flex">{flex_pct:.1f}%</div>
+      <div style="font-size: 0.85rem; font-weight: 700; color: #10b981; margin-bottom: 8px;">{br_money(flex_fat)}</div>
       <div class="logistics-bar">
         <div class="logistics-bar-fill flex" style="width: {flex_pct}%"></div>
       </div>
@@ -1292,6 +1296,7 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
       <div class="logistics-icon">{package_svg}</div>
       <div class="logistics-title">Coleta</div>
       <div class="logistics-value coleta">{coleta_pct:.1f}%</div>
+      <div style="font-size: 0.85rem; font-weight: 700; color: #8b5cf6; margin-bottom: 8px;">{br_money(coleta_fat)}</div>
       <div class="logistics-bar">
         <div class="logistics-bar-fill coleta" style="width: {coleta_pct}%"></div>
       </div>
@@ -1301,7 +1306,7 @@ def render_logistics_section(full_pct: float, correios_pct: float, flex_pct: flo
     """
     st.markdown(html, unsafe_allow_html=True)
 
-def render_ads_section(ads_pct: float, organic_pct: float, ads_qty: int, organic_qty: int, period: str):
+def render_ads_section(ads_pct: float, organic_pct: float, ads_qty: int, organic_qty: int, ads_value: float, organic_value: float, period: str):
     """Renderiza seção de vendas por publicidade"""
     megaphone_svg = get_svg_icon("megaphone")
     html = f"""
@@ -1314,10 +1319,12 @@ def render_ads_section(ads_pct: float, organic_pct: float, ads_qty: int, organic
     <div class="ads-metric ads">
       <div class="ads-metric-value ads">{ads_pct:.1f}%</div>
       <div class="ads-metric-label">Via Publicidade ({ads_qty:,} vendas)</div>
+      <div class="ads-metric-label" style="font-weight: 800; opacity: 1; margin-top: 8px; color: #fb923c;">{br_money(ads_value)}</div>
     </div>
     <div class="ads-metric organic">
       <div class="ads-metric-value organic">{organic_pct:.1f}%</div>
       <div class="ads-metric-label">Orgânicas ({organic_qty:,} vendas)</div>
+      <div class="ads-metric-label" style="font-weight: 800; opacity: 1; margin-top: 8px; color: #4ade80;">{br_money(organic_value)}</div>
     </div>
   </div>
   <div class="ads-bar-container">
@@ -1801,16 +1808,24 @@ def _transform_ml_raw(file) -> tuple:
 
     rec = base['receita']
     if rec.dtype == object:
-        rec = (rec.astype(str)
-                 .str.replace('\u00a0', '', regex=False)
-                 .str.replace('.', '', regex=False)
-                 .str.replace(',', '.', regex=False))
+        rec = rec.astype(str).str.replace('\u00a0', '', regex=False).str.strip()
+        # Se contiver tanto '.' quanto ',', assume formato BR (1.234,56)
+        if rec.str.contains(r'\.', regex=True).any() and rec.str.contains(r',', regex=True).any():
+            rec = rec.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        # Se contiver apenas ',', assume que é o separador decimal (1234,56)
+        elif rec.str.contains(r',', regex=True).any():
+            rec = rec.str.replace(',', '.', regex=False)
+        # Remove símbolos de moeda se existirem
+        rec = rec.str.replace(r'[R\$\s]', '', regex=True)
+        
     base['receita'] = pd.to_numeric(rec, errors='coerce').fillna(0.0)
 
     if base.empty:
         cols = ['MLB','Título'] + [f'Qntd {p}' for p in ['0-30','31-60','61-90','91-120']] + [f'Fat. {p}' for p in ['0-30','31-60','61-90','91-120']] + [f'Curva {p}' for p in ['0-30','31-60','61-90','91-120']]
         empty_df = pd.DataFrame(columns=cols)
-        empty_log = pd.DataFrame(columns=['periodo', 'full_pct', 'correios_pct', 'flex_pct', 'outros_pct', 'full_qty', 'correios_qty', 'flex_qty', 'outros_qty'])
+        empty_log = pd.DataFrame(columns=['periodo', 'full_pct', 'correios_pct', 'flex_pct', 'coleta_pct', 'outros_pct', 
+                                          'full_qty', 'correios_qty', 'flex_qty', 'coleta_qty', 'outros_qty',
+                                          'full_fat', 'correios_fat', 'flex_fat', 'coleta_fat', 'outros_fat'])
         empty_ads = pd.DataFrame(columns=['periodo', 'ads_pct', 'organic_pct', 'ads_qty', 'organic_qty'])
         return empty_df, empty_log, empty_ads
 
@@ -1864,6 +1879,12 @@ def _transform_ml_raw(file) -> tuple:
             coleta_qty = int(periodo_df[periodo_df['is_coleta']]['unidades'].sum())
             outros_qty = int(periodo_df[periodo_df['is_outros']]['unidades'].sum())
             
+            full_fat = float(periodo_df[periodo_df['is_full']]['receita'].sum())
+            correios_fat = float(periodo_df[periodo_df['is_correios']]['receita'].sum())
+            flex_fat = float(periodo_df[periodo_df['is_flex']]['receita'].sum())
+            coleta_fat = float(periodo_df[periodo_df['is_coleta']]['receita'].sum())
+            outros_fat = float(periodo_df[periodo_df['is_outros']]['receita'].sum())
+            
             logistics_data.append({
                 'periodo': periodo,
                 'full_pct': (full_qty / total_qty) * 100,
@@ -1876,12 +1897,21 @@ def _transform_ml_raw(file) -> tuple:
                 'flex_qty': flex_qty,
                 'coleta_qty': coleta_qty,
                 'outros_qty': outros_qty,
+                'full_fat': full_fat,
+                'correios_fat': correios_fat,
+                'flex_fat': flex_fat,
+                'coleta_fat': coleta_fat,
+                'outros_fat': outros_fat,
                 'total_qty': total_qty
             })
-            
+        
             # Vendas por publicidade
             ads_qty = int(periodo_df[periodo_df['is_ads']]['unidades'].sum())
             organic_qty = total_qty - ads_qty
+            
+            ads_value = float(periodo_df[periodo_df['is_ads']]['receita'].sum())
+            total_value = float(periodo_df['receita'].sum())
+            organic_value = total_value - ads_value
             
             ads_data.append({
                 'periodo': periodo,
@@ -1889,17 +1919,21 @@ def _transform_ml_raw(file) -> tuple:
                 'organic_pct': (organic_qty / total_qty) * 100,
                 'ads_qty': ads_qty,
                 'organic_qty': organic_qty,
+                'ads_value': ads_value,
+                'organic_value': organic_value,
                 'total_qty': total_qty
             })
         else:
             logistics_data.append({
                 'periodo': periodo,
                 'full_pct': 0, 'correios_pct': 0, 'flex_pct': 0, 'coleta_pct': 0, 'outros_pct': 0,
-                'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'coleta_qty': 0, 'outros_qty': 0, 'total_qty': 0
+                'full_qty': 0, 'correios_qty': 0, 'flex_qty': 0, 'coleta_qty': 0, 'outros_qty': 0,
+                'full_fat': 0, 'correios_fat': 0, 'flex_fat': 0, 'coleta_fat': 0, 'outros_fat': 0, 'total_qty': 0
             })
             ads_data.append({
                 'periodo': periodo,
-                'ads_pct': 0, 'organic_pct': 0, 'ads_qty': 0, 'organic_qty': 0, 'total_qty': 0
+                'ads_pct': 0, 'organic_pct': 0, 'ads_qty': 0, 'organic_qty': 0, 
+                'ads_value': 0, 'organic_value': 0, 'total_qty': 0
             })
 
     df_logistics = pd.DataFrame(logistics_data)
@@ -2618,6 +2652,11 @@ with tab1:
                     flex_pct=log_row['flex_pct'],
                     coleta_pct=log_row['coleta_pct'],
                     outros_pct=log_row['outros_pct'],
+                    full_fat=float(log_row.get('full_fat', 0)),
+                    correios_fat=float(log_row.get('correios_fat', 0)),
+                    flex_fat=float(log_row.get('flex_fat', 0)),
+                    coleta_fat=float(log_row.get('coleta_fat', 0)),
+                    outros_fat=float(log_row.get('outros_fat', 0)),
                     period=selected_period
                 )
         else:
@@ -2653,6 +2692,8 @@ with tab1:
                     organic_pct=ads_row['organic_pct'],
                     ads_qty=int(ads_row['ads_qty']),
                     organic_qty=int(ads_row['organic_qty']),
+                    ads_value=float(ads_row.get('ads_value', 0)),
+                    organic_value=float(ads_row.get('organic_value', 0)),
                     period=selected_period
                 )
     
