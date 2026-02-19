@@ -93,8 +93,8 @@ class ShopeeProcessor(BaseProcessor):
                 df_export['_shopee_visitantes_app'] = pc_app_data['app']
         
         # Shopee não tem dados de logística e ads no formato do ML
-        df_logistics = None
-        df_ads = None
+        df_logistics = pd.DataFrame()
+        df_ads = pd.DataFrame()
         
         return df_export, df_logistics, df_ads
     

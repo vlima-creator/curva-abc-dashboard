@@ -2145,6 +2145,12 @@ try:
     else:  # Mercado Livre - usa lógica original
         df, df_logistics, df_ads = load_main(uploaded_files[0])
     
+    # Garantir que df_ads e df_logistics não sejam None
+    if df_ads is None:
+        df_ads = pd.DataFrame()
+    if df_logistics is None:
+        df_logistics = pd.DataFrame()
+    
 except Exception as e:
     st.error(f"Erro ao processar arquivo(s): {str(e)}")
     import traceback
