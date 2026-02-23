@@ -15,6 +15,7 @@ from ui.components.shopee_components import (
     render_shopee_abc_distribution
 )
 from ui.components.helpers import to_xlsx_bytes, br_money, br_int, safe_div, pct, ensure_cols
+from ui.tabs.guide_tab import render_guide_tab
 
 st.set_page_config(page_title="Curva ABC, Diagnóstico e Ações", layout="wide")
 
@@ -2110,7 +2111,7 @@ with st.sidebar:
     # Versão removida conforme solicitado
 
 if not uploaded_files:
-    st.info("Faça upload do(s) relatório(s) de vendas (Mercado Livre ou Shopee) para começar.")
+    render_guide_tab()
     st.stop()
 
 # =========================
@@ -2569,7 +2570,7 @@ with col4: st.metric(m4_label, m4_val, m4_delta)
 
 st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["DASHBOARD", "LISTAS E EXPORTAÇÃO", "PLANO TÁTICO", "RELATÓRIO ESTRATÉGICO"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["DASHBOARD", "LISTAS E EXPORTAÇÃO", "PLANO TÁTICO", "RELATÓRIO ESTRATÉGICO", "GUIA DE USO"])
 
 # =========================
 # TAB 1: Dashboard
@@ -3321,3 +3322,9 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# =========================
+# TAB 5: Guia de Uso
+# =========================
+with tab5:
+    render_guide_tab()
